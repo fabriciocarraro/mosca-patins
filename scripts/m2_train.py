@@ -11,6 +11,10 @@ Exploração: ruído correlacionado no tempo (constante `--noise-tau`), porque r
 política parecia andar só por causa do ruído). A cada `--eval-every` iterações, os testes
 fixos rodam sem ruído, e o resultado entra em metrics.jsonl com o prefixo eval_.
 
+Escala da ação: desvio inicial 1,0 numa ação de 0,15 rad por unidade (como no rsl_rl). Com
+42 dimensões, desvio pequeno deixa a divergência KL enorme para qualquer mudança da média,
+e o ajuste automático prende a taxa de aprendizado no mínimo (a política não aprende).
+
 Saídas em runs/<nome>/: config.json, metrics.jsonl (uma linha por iteração),
 attempts.jsonl (uma linha por tentativa), checkpoints/ e latest.pt.
 
@@ -55,7 +59,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--v-final", type=float, default=6.0, help="cm/s")
     p.add_argument("--v-step", type=float, default=0.5, help="cm/s")
     p.add_argument("--push-iters", type=int, default=200)
-    p.add_argument("--init-std", type=float, default=0.25)
+    p.add_argument("--init-std", type=float, default=1.0)
+    p.add_argument("--action-scale", type=float, default=0.15, help="rad por unidade de ação")
+    p.add_argument("--action-clip", type=float, default=3.0)
+    p.add_argument("--target-kl", type=float, default=0.02)
     p.add_argument("--noise-tau", type=float, default=0.05, help="s; 0 = ruído branco")
     p.add_argument("--eval-every", type=int, default=25)
     p.add_argument("--eval-speed", type=float, default=3.0)
@@ -95,8 +102,9 @@ def main() -> None:
 
     reward_cfg = RewardConfig(**{name: getattr(args, name) for name in REWARD_FLAGS})
     env_cfg = EnvConfig(n_envs=args.envs, n_threads=args.threads, control_dt=args.control_dt,
-                        episode_seconds=args.episode_seconds, seed=args.seed, reward=reward_cfg)
-    ppo_cfg = PPOConfig()
+                        episode_seconds=args.episode_seconds, action_scale=args.action_scale,
+                        action_clip=args.action_clip, seed=args.seed, reward=reward_cfg)
+    ppo_cfg = PPOConfig(target_kl=args.target_kl)
     env = SkateVecEnv(env_cfg)
     ac = ActorCritic(env.obs_dim, env.priv_dim, env.act_dim, init_std=args.init_std)
     beta = float(np.exp(-args.control_dt / args.noise_tau)) if args.noise_tau > 0 else 0.0

@@ -53,7 +53,8 @@ class EnvConfig:
     n_threads: int = 16
     control_dt: float = 0.01  # s
     episode_seconds: float = 5.0
-    action_scale: float = 0.5  # rad em torno da postura canônica
+    action_scale: float = 0.5  # rad por unidade de ação, em torno da postura canônica
+    action_clip: float = 1.0  # a ação é cortada em ±action_clip (depois vêm os limites dos servos)
     init_joint_noise: float = 0.03  # rad
     min_load: float = 0.02  # fração do peso para um patim contar como apoiado
     min_height: float = 0.07  # cm
@@ -166,7 +167,7 @@ class SkateVecEnv:
     # ------------------------------------------------------------------- step
 
     def step(self, actions: np.ndarray):
-        actions = np.clip(actions, -1.0, 1.0)
+        actions = np.clip(actions, -self.cfg.action_clip, self.cfg.action_clip)
         ctrl = np.clip(self.stance_ctrl + self.cfg.action_scale * actions, self.leg_lo, self.leg_hi)
         alive = np.flatnonzero(self.alive)
 
