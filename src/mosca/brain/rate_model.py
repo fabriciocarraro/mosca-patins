@@ -10,6 +10,15 @@ precisa de só 2 subpassos.
 Treináveis por tipo celular, como no plano: fatores multiplicativos em a, θ e τ (em log,
 começando em 0, isto é, nos valores sorteados da receita deles). Neurônios do mesmo tipo
 dos dois lados compartilham os fatores, o que dá simetria esquerda/direita de graça.
+
+O estado fica como (neurônios × lote), contíguo: é o formato que a multiplicação esparsa
+CSR usa direto. Com o lote na primeira dimensão, as transpostas a cada multiplicação a
+deixavam 7 a 10 vezes mais lenta na GPU.
+
+Gradiente substituto (`surrogate=True`): a simulação é exatamente a equação acima, mas no
+cálculo do gradiente um neurônio abaixo do limiar ganha uma inclinação que decai com a
+distância até o limiar (largura θ/2 do próprio neurônio). Sem isso, neurônio calado não
+passa gradiente, e uma rede que começa calada não aprende nada.
 """
 
 from __future__ import annotations
@@ -33,16 +42,51 @@ def sparse_tensor(w: sp.csr_matrix, device, dtype) -> torch.Tensor:
                                        check_invariants=True)
 
 
+class _SpMM(torch.autograd.Function):
+    """W @ x com W fixa; a volta usa a transposta já pronta (o torch montaria W^T a cada chamada)."""
+
+    @staticmethod
+    def forward(ctx, w, wt, x):
+        ctx.wt = wt
+        return torch.sparse.mm(w, x)
+
+    @staticmethod
+    def backward(ctx, grad):
+        return None, None, torch.sparse.mm(ctx.wt, grad)
+
+
+class _Activation(torch.autograd.Function):
+    """max(r_max·tanh((a/r_max)·x), 0), com derivada substituta a·exp(x/largura) para x ≤ 0."""
+
+    @staticmethod
+    def forward(ctx, x, a, r_max, width):
+        t = torch.tanh((a / r_max) * x)
+        ctx.save_for_backward(x, a, t, width)
+        return torch.relu(r_max * t)
+
+    @staticmethod
+    def backward(ctx, grad):
+        x, a, t, width = ctx.saved_tensors
+        above = x > 0
+        slope = 1.0 - t * t
+        dx = torch.where(above, a * slope, a * torch.exp(torch.clamp(x, max=0.0) / width))
+        da = torch.where(above, x * slope, torch.zeros_like(x))
+        return grad * dx, (grad * da).sum(dim=1, keepdim=True), None, None
+
+
 class PuglieseNet(nn.Module):
     def __init__(self, w: sp.csr_matrix, params: NeuronParams, cell_type: np.ndarray | None = None, b: float = B,
-                 device: str | torch.device = "cpu", dtype=torch.float32):
+                 device: str | torch.device = "cpu", dtype=torch.float32, surrogate: bool = False):
         """`w`: pós × pré com sinal × nº de sinapses (sem o b); `cell_type`: rótulo de cada neurônio
         para compartilhar os fatores treináveis (None = um fator por neurônio)."""
         super().__init__()
-        self.register_buffer("w", sparse_tensor(b * w, device, dtype))
+        # Reconstruídas a partir do grafo; fora do state_dict para os checkpoints ficarem pequenos.
+        self.register_buffer("w", sparse_tensor(b * w, device, dtype), persistent=False)
+        self.register_buffer("wt", sparse_tensor((b * w).T.tocsr(), device, dtype), persistent=False)
+        self.surrogate = surrogate
 
-        def buf(x):
-            return torch.as_tensor(np.asarray(x), device=device, dtype=dtype)
+        def buf(x):  # parâmetros por neurônio como coluna (N, 1), para somar ao estado (N, lote)
+            return torch.as_tensor(np.asarray(x), device=device, dtype=dtype)[:, None]
 
         self.register_buffer("tau0", buf(params.tau))
         self.register_buffer("a0", buf(params.a))
@@ -65,15 +109,21 @@ class PuglieseNet(nn.Module):
 
     def neuron_params(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         g = self.group
-        return (self.a0 * self.log_a[g].exp(), self.theta0 * self.log_theta[g].exp(), self.tau0 * self.log_tau[g].exp())
+        return (self.a0 * self.log_a[g, None].exp(), self.theta0 * self.log_theta[g, None].exp(),
+                self.tau0 * self.log_tau[g, None].exp())
 
     def deriv(self, r: torch.Tensor, current: torch.Tensor, a, theta, tau) -> torch.Tensor:
-        """dr/dt para um lote r (B, N) com corrente externa (B, N)."""
-        drive = torch.sparse.mm(self.w, r.T).T + current - theta
-        return (torch.relu(self.r_max * torch.tanh((a / self.r_max) * drive)) - r) / tau
+        """dr/dt para o estado r (N, lote) com corrente externa (N, lote)."""
+        drive = _SpMM.apply(self.w, self.wt, r) + current - theta
+        if self.surrogate:
+            rate = _Activation.apply(drive, a, self.r_max, 0.5 * self.theta0)
+        else:
+            rate = torch.relu(self.r_max * torch.tanh((a / self.r_max) * drive))
+        return (rate - r) / tau
 
     def forward(self, r: torch.Tensor, current: torch.Tensor, dt: float, substeps: int = 1) -> torch.Tensor:
-        """Avança `dt` segundos em `substeps` passos de RK4, com a corrente constante no intervalo."""
+        """Avança `dt` segundos em `substeps` passos de RK4, com a corrente constante no intervalo.
+        `r` e `current` têm forma (N, lote)."""
         a, theta, tau = self.neuron_params()
         h = dt / substeps
         for _ in range(substeps):
@@ -81,5 +131,8 @@ class PuglieseNet(nn.Module):
             k2 = self.deriv(r + 0.5 * h * k1, current, a, theta, tau)
             k3 = self.deriv(r + 0.5 * h * k2, current, a, theta, tau)
             k4 = self.deriv(r + h * k3, current, a, theta, tau)
-            r = (r + (h / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)).clamp(0.0, 1000.0)
+            r = r + (h / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+            # Corte em [0, 1000] como na referência; o gradiente passa direto (o clamp do torch
+            # zera o gradiente no limite, justamente onde fica um neurônio calado).
+            r = r + (r.clamp(0.0, 1000.0) - r).detach()
         return r

@@ -41,12 +41,13 @@ def main() -> None:
     print("por superclasse:", dict(Counter(c.superclass.tolist()).most_common()))
     signs = Counter(c.sign.tolist())
     print(f"sinal: {signs.get(1, 0):,} excitatórios, {signs.get(-1, 0):,} inibitórios, {signs.get(0, 0):,} sem ligação rápida")
-    print("\npata        motores  sensoriais")
+    print("\npata        motores  sensoriais  proprioceptores")
     for leg in LEGS:
-        print(f"{leg:10s} {len(c.groups[f'motor_{leg}']):8d} {len(c.groups[f'sensory_{leg}']):11d}")
+        print(f"{leg:10s} {len(c.groups[f'motor_{leg}']):8d} {len(c.groups[f'sensory_{leg}']):11d} "
+              f"{len(c.groups[f'proprio_{leg}']):16d}")
     total_motor = sum(len(c.groups[f"motor_{leg}"]) for leg in LEGS)
     print(f"total de motores das patas: {total_motor} (esperado 381 antes da poda)")
-    print("\ncomando:", {k: len(v) for k, v in c.groups.items() if not k.startswith(("motor_", "sensory_"))})
+    print("\ncomando:", {k: len(v) for k, v in c.groups.items() if not k.startswith(("motor_", "sensory_", "proprio_"))})
     missing = [f"{t}_{s}" for t in ("DNg100", "DNa01", "DNa02", "MDN") for s in "LR" if f"{t}_{s}" not in c.groups]
     print("descendentes de comando fora do grafo (sem caminho até as patas):", missing or "nenhum")
     in_deg = np.bincount(c.post, minlength=c.n)

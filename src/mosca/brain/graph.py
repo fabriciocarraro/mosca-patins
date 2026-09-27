@@ -10,8 +10,9 @@ e glutamato inibem (como em Pugliese et al.). Para "incerto", usa a previsão po
 celular e depois a individual; outros transmissores (serotonina, histamina, etc.) ficam de
 fora das ligações rápidas. A poda tira quem não tem caminho até um neurônio motor de pata.
 
-Grupos por pata: neurônios motores (subclasses fl/ml/hl, por neurômero e lado) e sensoriais
-(proprioceptivos e táteis que entram pelos nervos daquela pata, pelo lado de entrada).
+Grupos por pata: neurônios motores (subclasses fl/ml/hl, por neurômero e lado), sensoriais
+(proprioceptivos e táteis que entram pelos nervos daquela pata, pelo lado de entrada) e, entre
+eles, só os proprioceptivos (órgão cordotonal, placas de pelos, sensilas campaniformes).
 """
 
 from __future__ import annotations
@@ -138,6 +139,8 @@ def build_connectome(min_synapses: int = 5, data_dir: Path = MALECNS_DIR, vnc_on
         groups[f"sensory_{leg}"] = np.flatnonzero(
             ann.superclass.eq("vnc_sensory") & ann["class"].isin(SENSORY_CLASSES)
             & ann.entryNerve.isin(LEG_NERVES[neuromere]) & (side == side_code))
+        groups[f"proprio_{leg}"] = groups[f"sensory_{leg}"][
+            ann["class"].to_numpy()[groups[f"sensory_{leg}"]] == "mechanosensory_proprioceptive"]
     for cell_type in COMMAND_TYPES:
         for side_code in ("L", "R"):
             idx = np.flatnonzero(ann.type.eq(cell_type) & (side == side_code))
