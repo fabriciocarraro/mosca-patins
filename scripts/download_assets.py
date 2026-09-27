@@ -5,6 +5,7 @@ Uso:
     python scripts/download_assets.py --walking-sample   # + 100 trechos de moscas reais andando
     python scripts/download_assets.py --malecns          # + anotações e neurotransmissores do MaleCNS
     python scripts/download_assets.py --malecns-weights  # + ligações do MaleCNS (1,1 GB)
+    python scripts/download_assets.py --malecns-stats    # + sinapses por neurônio do MaleCNS (baixa 778 MB, guarda 2 MB)
     python scripts/download_assets.py --pugliese         # + rede do MaleCNS usada por Pugliese et al. (75 MB)
 
 Os arquivos do flybody são conferidos pelo hash de blob do Git informado pela API do GitHub,
@@ -37,6 +38,10 @@ MALECNS_SMALL = (
     "body-neurotransmitters-male-cns-v1.0.feather",
 )
 MALECNS_WEIGHTS = "connectome-weights-male-cns-v1.0-minconf-0.5.feather"
+# Tabela por corpo (88 milhões de fragmentos): só as sinapses dos neurônios anotados ficam, em
+# SYNAPSE_COUNTS, para estimar o volume dos neurônios (mosca.brain.pugliese.estimate_sizes).
+MALECNS_STATS = "body-stats-male-cns-v1.0-minconf-0.5.feather"
+SYNAPSE_COUNTS = "body-synapse-counts.feather"
 
 # Rede do MaleCNS que Pugliese et al. usaram (neurônios motores da pata da frente, pré-motores e
 # descendentes; sinapses só nas regiões do cordão nervoso), no repositório deles.
@@ -139,6 +144,23 @@ def download_malecns(names: tuple[str, ...], dest: Path = MALECNS_DIR) -> None:
         print(f"MaleCNS: {name} ({path.stat().st_size / 1e6:.1f} MB)")
 
 
+def download_malecns_stats(dest: Path = MALECNS_DIR) -> None:
+    """Sinapses de entrada e saída de cada neurônio anotado; a tabela original é apagada depois."""
+    import pandas as pd
+    import pyarrow.feather as feather
+
+    if (dest / SYNAPSE_COUNTS).exists():
+        print(f"MaleCNS: {SYNAPSE_COUNTS} já presente")
+        return
+    download_malecns(MALECNS_SMALL + (MALECNS_STATS,), dest)
+    annotated = pd.read_feather(dest / MALECNS_SMALL[0], columns=["bodyId"]).bodyId
+    stats = feather.read_table(dest / MALECNS_STATS, columns=["body", "pre", "post"]).to_pandas()
+    stats = stats[stats.body.isin(annotated)].reset_index(drop=True)
+    stats.to_feather(dest / SYNAPSE_COUNTS)
+    (dest / MALECNS_STATS).unlink()
+    print(f"MaleCNS: {SYNAPSE_COUNTS} ({len(stats)} neurônios); {MALECNS_STATS} apagado")
+
+
 def download_pugliese(dest: Path = PUGLIESE_DIR) -> None:
     """Rede do MaleCNS de Pugliese et al., conferida pelo hash de blob do Git."""
     from urllib.parse import quote
@@ -167,6 +189,8 @@ def main() -> None:
     parser.add_argument("--walking-sample", action="store_true", help="baixa os 100 trechos de caminhada (~95 MB)")
     parser.add_argument("--malecns", action="store_true", help="anotações e neurotransmissores do MaleCNS (~55 MB)")
     parser.add_argument("--malecns-weights", action="store_true", help="ligações do MaleCNS (~1,1 GB)")
+    parser.add_argument("--malecns-stats", action="store_true",
+                        help="sinapses por neurônio do MaleCNS (baixa 778 MB, guarda ~2 MB)")
     parser.add_argument("--pugliese", action="store_true", help="rede do MaleCNS de Pugliese et al. (~75 MB)")
     args = parser.parse_args()
     if args.pugliese:
@@ -176,6 +200,8 @@ def main() -> None:
         download_walking_sample()
     if args.malecns or args.malecns_weights:
         download_malecns(MALECNS_SMALL + ((MALECNS_WEIGHTS,) if args.malecns_weights else ()))
+    if args.malecns_stats:
+        download_malecns_stats()
 
 
 if __name__ == "__main__":

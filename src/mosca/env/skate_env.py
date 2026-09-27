@@ -31,14 +31,25 @@ BODY_PARTS = ("thorax", "head", "rostrum", "haustellum", "labrum", "antenna", "w
 
 @dataclass(frozen=True)
 class RewardConfig:
+    """Pesos da recompensa por passo.
+
+    Parada, a mosca só ganha os termos de postura (w_up + w_yaw); andando na velocidade
+    pedida e deslizando, ganha também w_vel + w_roll. Nas execuções A a D, o rolamento pagava
+    integral com a mosca parada (patim e corpo a 0 cm/s) e a velocidade era uma gaussiana
+    estreita, sem sinal longe do alvo: ficar parada rendia 2/3 do máximo, e a política média
+    não saía do lugar.
+    """
+
     w_vel: float = 1.0
-    sigma_vel: float = 1.0  # cm/s; tolerância = sigma_vel + sigma_vel_rel·v_pedida
+    vel_shape: str = "tent"  # "tent": 1 − |v − v_pedida| / v_pedida, com inclinação desde v = 0; "gauss"
+    sigma_vel: float = 1.0  # cm/s, só para "gauss"; tolerância = sigma_vel + sigma_vel_rel·v_pedida
     sigma_vel_rel: float = 0.0
-    w_yaw: float = 0.3
+    w_yaw: float = 0.2
     sigma_yaw: float = 1.0  # rad/s
-    w_up: float = 0.2
+    w_up: float = 0.1
     w_roll: float = 0.5  # bônus de rolamento (patins apoiados andando junto com o corpo)
     sigma_roll: float = 0.5  # cm/s
+    roll_gated: bool = True  # o bônus de rolamento escala com v/v_pedida (parada não ganha nada)
     w_slip: float = 0.2  # por cm/s de derrapagem lateral média dos patins apoiados
     w_cot: float = 0.0  # custo de transporte; liga depois do primeiro movimento
     w_rate: float = 0.01  # mudança brusca de ação
@@ -234,12 +245,17 @@ class SkateVecEnv:
         terminated = terminated or not np.isfinite(d.qacc).all()
 
         # Recompensa
-        sigma_vel = rw.sigma_vel + rw.sigma_vel_rel * self.v_cmd[i]
-        r_vel = np.exp(-(((self.ema_v[i] - self.v_cmd[i]) / sigma_vel) ** 2))
+        if rw.vel_shape == "tent":
+            r_vel = max(0.0, 1.0 - abs(self.ema_v[i] - self.v_cmd[i]) / max(self.v_cmd[i], 0.5))
+        else:
+            sigma_vel = rw.sigma_vel + rw.sigma_vel_rel * self.v_cmd[i]
+            r_vel = np.exp(-(((self.ema_v[i] - self.v_cmd[i]) / sigma_vel) ** 2))
         r_yaw = np.exp(-(((yaw_rate - self.yaw_cmd[i]) / rw.sigma_yaw) ** 2))
         r_up = max(up_z, 0.0)
         if grounded.any() and self.v_cmd[i] >= 0.5:
             r_roll = float(np.mean(np.exp(-(((along[grounded] - v_fwd) / rw.sigma_roll) ** 2))))
+            if rw.roll_gated:
+                r_roll *= min(max(v_fwd, 0.0) / self.v_cmd[i], 1.0)
             slip = float(np.mean(np.abs(side[grounded])))
         else:
             r_roll, slip = 0.0, float(np.mean(np.abs(side[grounded]))) if grounded.any() else 0.0

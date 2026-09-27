@@ -8,6 +8,9 @@ velocidade pedida de 3 cm/s. Critério do M2: ≥80% dos testes com média ≥3 
 Uso:
     python scripts/m2_eval.py runs/m2_mlp_a/latest.pt
     python scripts/m2_eval.py runs/m2_mlp_a/latest.pt --gif outputs/m2_teste0.gif
+    python scripts/m2_eval.py runs/m2_mlp_a/latest.pt --speed 1 --stochastic --sheet outputs/m2_folha.png
+
+Com `--stochastic`, as tentativas usam o ruído de exploração do treino (não valem para o critério).
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ TEST_ATTEMPT_BASE = 10**9  # números das tentativas de teste: nunca aparecem no
 
 def load(path: str, n_envs: int, threads: int):
     ckpt = torch.load(path, weights_only=False)
+    load.args = ckpt.get("args", {})
     env_cfg = dict(ckpt["env_cfg"])
     env_cfg["reward"] = RewardConfig(**env_cfg["reward"])
     env_cfg.update(n_envs=n_envs, n_threads=threads)
@@ -45,6 +49,23 @@ def policy(ac: ActorCritic, norm: RunningNorm, obs: np.ndarray) -> np.ndarray:
         return ac.actor(torch.from_numpy(norm(obs).astype(np.float32))).numpy()
 
 
+class NoisyPolicy:
+    """Média + desvio × ruído correlacionado, como na coleta do treino."""
+
+    def __init__(self, ac: ActorCritic, norm: RunningNorm, n: int, control_dt: float, seed: int = 0):
+        tau = load.args.get("noise_tau", 0.05)
+        self.beta = float(np.exp(-control_dt / tau)) if tau > 0 else 0.0
+        self.ac, self.norm, self.gen = ac, norm, torch.Generator().manual_seed(seed)
+        self.noise = torch.randn((n, ac.log_std.numel()), generator=self.gen)
+
+    def __call__(self, obs: np.ndarray) -> np.ndarray:
+        with torch.no_grad():
+            mean = self.ac.actor(torch.from_numpy(self.norm(obs).astype(np.float32)))
+            action = mean + self.ac.log_std.exp() * self.noise
+            self.noise = self.beta * self.noise + np.sqrt(1 - self.beta**2) * torch.randn(self.noise.shape, generator=self.gen)
+        return action.numpy()
+
+
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # terminais do Windows (cp1252) e "≥"
     parser = argparse.ArgumentParser(description=__doc__)
@@ -53,14 +74,19 @@ def main() -> None:
     parser.add_argument("--speed", type=float, default=3.0)
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--gif", default="", help="grava um GIF do teste 0 (câmera lenta 4×)")
+    parser.add_argument("--sheet", default="", help="grava uma folha de quadros (PNG) do teste 0, um a cada 0,25 s")
+    parser.add_argument("--stochastic", action="store_true", help="com o ruído de exploração do treino")
     args = parser.parse_args()
 
     env, ac, norm, state = load(args.checkpoint, args.tests, args.threads)
+    act = NoisyPolicy(ac, norm, args.tests, env.cfg.control_dt) if args.stochastic else (lambda o: policy(ac, norm, o))
     attempts = TEST_ATTEMPT_BASE + np.arange(args.tests)
     obs, _ = env.reset(attempts, np.full(args.tests, args.speed))
     while env.alive.any():
-        obs, *_ = env.step(policy(ac, norm, obs))
+        obs, *_ = env.step(act(obs))
     episodes = env.episode_stats()
+    if args.stochastic:
+        print("(com ruído de exploração: não vale para o critério do M2)")
 
     print(f"checkpoint: iteração {state['it']}, {state['attempts']} tentativas de treino, v_max {state['v_max']:.1f} cm/s")
     print(" teste  dur(s)  queda  vel(cm/s)  rolamento  desliza  patins no chão  custo de transporte")
@@ -76,10 +102,11 @@ def main() -> None:
     print("M2:", "OK" if fast >= 0.8 and glide >= 0.25 and falls < 0.1 else "ainda não")
     env.close()
 
-    if args.gif:
-        from PIL import Image
+    if args.gif or args.sheet:
+        from PIL import Image, ImageDraw
 
         env, ac, norm, _ = load(args.checkpoint, 1, 1)
+        act = NoisyPolicy(ac, norm, 1, env.cfg.control_dt) if args.stochastic else (lambda o: policy(ac, norm, o))
         obs, _ = env.reset(attempts[:1], np.full(1, args.speed))
         renderer = mujoco.Renderer(env.model, height=480, width=854)
         cam = mujoco.MjvCamera()
@@ -87,12 +114,25 @@ def main() -> None:
         cam.distance, cam.elevation, cam.azimuth = 0.9, -22, 120
         frames = []
         while env.alive.any():
-            obs, *_ = env.step(policy(ac, norm, obs))
+            obs, *_ = env.step(act(obs))
             renderer.update_scene(env.datas[0], camera=cam)
             frames.append(Image.fromarray(renderer.render()))
-        Path(args.gif).parent.mkdir(parents=True, exist_ok=True)
-        frames[0].save(args.gif, save_all=True, append_images=frames[1:], duration=40, loop=0)
-        print(f"GIF: {args.gif} ({len(frames)} quadros a 100 Hz, reproduzido a 25 fps = 4× mais lento)")
+        if args.gif:
+            Path(args.gif).parent.mkdir(parents=True, exist_ok=True)
+            frames[0].save(args.gif, save_all=True, append_images=frames[1:], duration=40, loop=0)
+            print(f"GIF: {args.gif} ({len(frames)} quadros a 100 Hz, reproduzido a 25 fps = 4× mais lento)")
+        if args.sheet:
+            every = max(1, round(0.25 / env.cfg.control_dt))
+            picked = frames[::every][:20]
+            cols, (w, h) = 4, (427, 240)
+            sheet = Image.new("RGB", (cols * w, -(-len(picked) // cols) * h), "white")
+            for k, frame in enumerate(picked):
+                tile = frame.resize((w, h))
+                ImageDraw.Draw(tile).text((6, 4), f"t = {k * every * env.cfg.control_dt:.2f} s", fill="black")
+                sheet.paste(tile, ((k % cols) * w, (k // cols) * h))
+            Path(args.sheet).parent.mkdir(parents=True, exist_ok=True)
+            sheet.save(args.sheet)
+            print(f"folha de quadros: {args.sheet} ({len(picked)} quadros, um a cada {every * env.cfg.control_dt:.2f} s)")
         env.close()
 
 

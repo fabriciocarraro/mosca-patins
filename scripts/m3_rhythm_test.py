@@ -52,11 +52,11 @@ def main() -> None:
         rng = np.random.default_rng(args.seed + k)
         net = RateNet(w, sample_params(table["size"].to_numpy(), rng))
         t0 = time.perf_counter()
-        rates = simulate(net, current)
-        res = rhythm(rates, motor)
+        rec = simulate(net, current)
+        res = rhythm(rec.rates[motor], rec.peak)
         results.append(res)
         print(f"réplica {k}: nota {res.score:.3f}, {res.freq_hz:5.2f} Hz, {res.active_motor} motores ativos, "
-              f"{res.active} neurônios ativos, DNg100 a {rates[STIM_ROW, -1]:.1f} Hz ({time.perf_counter() - t0:.1f} s)")
+              f"{res.active} neurônios ativos, DNg100 a {rec.rates[STIM_ROW, -1]:.1f} Hz ({time.perf_counter() - t0:.1f} s)")
 
     scores = np.array([r.score for r in results])
     print(f"\nnota média {scores.mean():.3f} (publicado 0,985); rítmicas (nota ≥ 0,5): {(scores >= 0.5).mean():.0%} (publicado 100%)")

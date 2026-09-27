@@ -11,18 +11,27 @@
   Euler só serve com passo ≤ 0,1 ms.
 - Nota de oscilação: porta de `compute_oscillation_score` (autocorrelação normalizada,
   proeminência própria deles, comparação com um seno da mesma frequência).
+- Volume: o deles vem do neuPrint (exige login) e só cobre os 4310 neurônios da rede deles.
+  Para os outros, `estimate_sizes` estima o volume pela contagem de sinapses.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import scipy.sparse as sp
 from scipy.signal import correlate
 from scipy.special import ndtr, ndtri
 
+from mosca.paths import MALECNS_DIR, PUGLIESE_DIR
+
 B = 0.03
+PUGLIESE_TABLE = "wTable_20260210_vncRoisOnly.csv"
+SYNAPSE_COUNTS = "body-synapse-counts.feather"  # pré e pós de cada neurônio anotado (download_assets --malecns-stats)
+ANNOTATIONS = "body-annotations-male-cns-v1.0-minconf-0.5.feather"
 
 
 @dataclass(frozen=True)
@@ -41,17 +50,67 @@ def trunc_normal(rng: np.random.Generator, mean: float, sd: float, size: int) ->
     return mean + sd * ndtri(np.clip(u, 1e-10, 1 - 1e-10))
 
 
-def sample_params(sizes: np.ndarray, rng: np.random.Generator) -> NeuronParams:
+def sample_params(sizes: np.ndarray, rng: np.random.Generator, reference: float | None = None) -> NeuronParams:
+    """Parâmetros por neurônio. O volume entra relativo a `reference` (por padrão, a mediana da
+    própria rede, como no código deles)."""
     n = len(sizes)
     s = np.asarray(sizes, dtype=float).copy()
     median = np.nanmedian(s)
     s[np.isnan(s) | (s == 0)] = median
-    s /= median
+    s /= median if reference is None else reference
     tau = trunc_normal(rng, 0.02, 0.002, n)
     a = trunc_normal(rng, 1.0, 0.1, n) / s
     theta = trunc_normal(rng, 7.5, 0.6, n) * s
     r_max = trunc_normal(rng, 200.0, 10.0, n)
     return NeuronParams(tau, a, theta, r_max)
+
+
+@dataclass(frozen=True)
+class SizeModel:
+    """log(volume) = α + β·log(sinapses de entrada + saída) + desvio médio da superclasse."""
+
+    alpha: float
+    beta: float
+    offset: dict[str, float]
+    r: float  # correlação no ajuste
+    spread: float  # erro típico, como fator multiplicativo
+
+
+def estimate_sizes(body_ids: np.ndarray, use_real: bool = True, pugliese_dir: Path = PUGLIESE_DIR,
+                   data_dir: Path = MALECNS_DIR) -> tuple[np.ndarray, np.ndarray, SizeModel]:
+    """Volume de cada neurônio: o real (tabela de Pugliese) quando existe e `use_real`, senão o estimado.
+
+    A estimativa é ajustada nos neurônios da rede de Pugliese e usa as sinapses totais de cada
+    neurônio no MaleCNS. Nessa rede, trocar todos os volumes reais pelos estimados mantém o
+    ritmo do DNg100, e embaralhar os volumes acaba com ele (teste em tests/test_pugliese.py).
+    Devolve (volumes, máscara dos estimados, modelo).
+    """
+    table = pd.read_csv(pugliese_dir / PUGLIESE_TABLE, index_col=0)
+    counts = pd.read_feather(data_dir / SYNAPSE_COUNTS, columns=["body", "pre", "post"]).set_index("body")
+    superclass = pd.read_feather(data_dir / ANNOTATIONS, columns=["bodyId", "superclass"]).set_index("bodyId").superclass
+    synapses = counts.pre + counts.post
+
+    real = pd.Series(table["size"].to_numpy(dtype=float), index=table["bodyId"].to_numpy())
+    syn = synapses.reindex(real.index)
+    fit = (real > 0) & (syn > 0)
+    x, y = np.log(syn[fit].to_numpy(dtype=float)), np.log(real[fit].to_numpy())
+    beta, alpha = np.polyfit(x, y, 1)
+    resid = pd.Series(y - (alpha + beta * x), index=real.index[fit])
+    by_class = resid.groupby(superclass.reindex(resid.index).fillna("")).agg(["mean", "size"])
+    offset = {k: float(v) for k, v in by_class["mean"][by_class["size"] >= 20].items() if k}
+    shift = superclass.reindex(resid.index).map(offset).fillna(0.0).to_numpy()
+    final = resid.to_numpy() - shift
+    model = SizeModel(float(alpha), float(beta), offset, float(np.corrcoef(y, y - final)[0, 1]), float(np.exp(final.std())))
+
+    body_ids = np.asarray(body_ids)
+    own = real.reindex(body_ids).to_numpy()
+    syn_own = synapses.reindex(body_ids).to_numpy(dtype=float)
+    shift_own = superclass.reindex(body_ids).map(offset).fillna(0.0).to_numpy()
+    with np.errstate(divide="ignore"):
+        guess = np.exp(alpha + beta * np.log(syn_own) + shift_own)
+    guess[~(syn_own > 0)] = np.nan  # sem sinapse conhecida: sample_params usa a mediana
+    estimated = ~(own > 0) if use_real else np.ones(len(body_ids), dtype=bool)
+    return np.where(estimated, guess, own), estimated, model
 
 
 class RateNet:
@@ -78,20 +137,30 @@ class RateNet:
         return r + (h / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
 
 
+@dataclass(frozen=True)
+class Recording:
+    rates: np.ndarray  # (neurônios gravados, passos+1), a cada h
+    peak: np.ndarray  # (N,) taxa máxima de cada neurônio da rede
+
+
 def simulate(net: RateNet, current: np.ndarray, seconds: float = 2.0, h: float = 1e-3,
-             pulse: tuple[float, float] = (0.02, 1.999)) -> np.ndarray:
-    """Taxas (N × passos+1) a cada `h`, começando do repouso, com a corrente ligada durante `pulse`."""
+             pulse: tuple[float, float] = (0.02, 1.999), record: np.ndarray | None = None) -> Recording:
+    """Simula a partir do repouso, com a corrente ligada durante `pulse`, gravando os neurônios de
+    `record` (todos, se None)."""
     steps = round(seconds / h)
-    out = np.zeros((net.n, steps + 1))
+    record = np.arange(net.n) if record is None else np.asarray(record)
+    out = np.zeros((len(record), steps + 1))
     r = np.zeros(net.n)
+    peak = np.zeros(net.n)
     zero = np.zeros(net.n)
     for k in range(steps):
         t = k * h
         # Como no solver deles, a corrente vale nos instantes dentro do pulso.
         on = pulse[0] <= t <= pulse[1]
         r = np.clip(net.rk4(r, current if on else zero, h), 0.0, 1000.0)
-        out[:, k + 1] = r
-    return out
+        out[:, k + 1] = r[record]
+        np.maximum(peak, r, out=peak)
+    return Recording(out, peak)
 
 
 def _peaks(x: np.ndarray, min_prominence: float = 0.05) -> tuple[np.ndarray, np.ndarray]:
@@ -138,15 +207,15 @@ class Rhythm:
     active: int  # neurônios ativos na rede inteira
 
 
-def rhythm(rates: np.ndarray, motor: np.ndarray, h: float = 1e-3, skip: float = 0.25) -> Rhythm:
-    start = round(skip / h)
-    tail = rates[:, start:]
-    active = [i for i in motor if tail[i].max() > 0.01]
+def rhythm(motor_rates: np.ndarray, peak: np.ndarray, h: float = 1e-3, skip: float = 0.25) -> Rhythm:
+    """Ritmo dos neurônios motores (linhas de `motor_rates`) depois de descartar `skip` s."""
+    tail = motor_rates[:, round(skip / h):]
     scores, freqs = [], []
-    for i in active:
-        s, f = neuron_score(tail[i])
+    active = [trace for trace in tail if trace.max() > 0.01]
+    for trace in active:
+        s, f = neuron_score(trace)
         scores.append(s)
         if f > 0:
             freqs.append(f / h)
     return Rhythm(float(np.mean(scores)) if scores else 0.0, float(np.mean(freqs)) if freqs else float("nan"),
-                  len(active), int((rates.max(axis=1) > 0.01).sum()))
+                  len(active), int((peak > 0.01).sum()))
