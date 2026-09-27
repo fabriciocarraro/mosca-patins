@@ -16,7 +16,8 @@ fiel durante o treino.
 | M1 Física dos patins | Contato validado no trenó; na mosca inteira os patins rolam; marchas programadas deslizam a 2 a 2,6 cm/s (rolamento 0,99). Uma versão anterior dizia que elas só "andavam de pato": era erro de medida (velocidade do patim lida no referencial de inércia, com os eixos trocados), corrigido. |
 | M2 MLP patina | Ok (execução E, iteração 55, ~1 h de treino no Spark). Nos 20 testes sem ruído, pedindo 3,5 cm/s: média de 3,02 a 3,09 cm/s em 5 s a partir do repouso, deslizando 98% do tempo, sem quedas (critério: ≥3 cm/s em ≥80% dos testes, ≥25%, <10%). O mesmo resultado com passo de física 2× e 4× menor; com a postura congelada ela para (não há energia de graça). Falta de controle de rumo: ela vira ~25°/s para a direita. As execuções A a D não saíram do lugar: ruído branco que empurrava a mosca por vibração, recompensa que pagava por ficar parada e bônus de rolamento medido no eixo errado. |
 | M3 Conectoma montado | Em andamento. Grafo do controlador: 23.117 neurônios e 1,04 milhão de ligações (só sinapses do cordão nervoso), com os 381 motores das patas. Ritmo do DNg100 reproduzido na rede de Pugliese et al. (100% das réplicas, 11,5 Hz) e no nosso grafo de 6 patas, com um fator global de excitabilidade calibrado (100% das réplicas, ~10 Hz, na pata da frente esquerda). Com os dois DNg100 não há faixa rítmica: coordenar as patas fica para o treino (M4). Tabela músculo → junta pronta (sinal de cada junta conferido pela geometria; na pata da frente todo neurônio motor tem músculo identificado, nas outras 12 a 14 ficam com peso livre). Rede em torch com RK4: 2 subpassos de 5 ms por passo de controle reproduzem o passo de 1 ms (correlação 0,9995). |
-| M4 em diante | A fazer |
+| M4 Conectoma anda | Mudança de rumo: como a MLP aprendeu a patinar direto por tentativa e erro em ~1 h, o conectoma também treina direto na patinação (`scripts/connectome_train.py`, na GPU do Spark), com a mesma recompensa. Aprender a andar imitando a política do flybody fica como plano B. Primeiro treino (conectoma_a) em andamento. |
+| M5 em diante | A fazer |
 
 ## Instalação
 
@@ -49,6 +50,8 @@ O PyTorch entra à parte: a versão para CPU no notebook e a cu130 no Spark.
 | `python scripts/m3_build_graph.py` | M3: grafo do controlador e contagens por pata |
 | `python scripts/m3_rhythm_test.py` | M3: ritmo do DNg100 na rede de Pugliese et al. |
 | `python scripts/m3_rhythm_full.py` | M3: ritmo do DNg100 no grafo de 6 patas |
+| `python scripts/m3_bench_brain.py --device cuda` | M3: custo da rede por passo de controle (coleta e gradiente) |
+| `python scripts/connectome_train.py --run NOME --device cuda` | conectoma aprende a patinar por PPO (rede na GPU, física na CPU) |
 
 ## Estrutura
 
@@ -65,6 +68,8 @@ src/mosca/brain/graph.py   grafo do controlador (MaleCNS): recorte, sinais, grup
 src/mosca/brain/pugliese.py  modelo de taxa de Pugliese et al., volume estimado, nota de ritmo
 src/mosca/brain/rate_model.py  rede de Pugliese em torch (lote, RK4, fatores por tipo celular), para o controlador
 src/mosca/brain/muscles.py  tabela músculo → junta com sinal fixo (decodificador por pata)
+src/mosca/brain/controller.py  controlador de conectoma: codificador por pata, comando no DNg100, decodificador pelos músculos
+src/mosca/rl/recurrent_ppo.py  PPO com ator recorrente (trechos de retropropagação truncada)
 ```
 
 ## Créditos e licenças
