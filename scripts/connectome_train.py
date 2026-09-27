@@ -65,6 +65,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--noise-tau", type=float, default=0.05)
     p.add_argument("--target-kl", type=float, default=0.02)
     p.add_argument("--critic-lr", type=float, default=3e-4, help="taxa fixa do crítico (a do ator se ajusta pela KL)")
+    p.add_argument("--enc-lr-mult", type=float, default=10.0, help="multiplicador da taxa do codificador")
     p.add_argument("--epochs", type=int, default=3)
     p.add_argument("--chunk", type=int, default=16)
     p.add_argument("--minibatch-chunks", type=int, default=32)
@@ -124,8 +125,14 @@ def main() -> None:
     graph = Connectome.load(Path(args.graph))
     pol = ConnectomePolicy(graph, ctrl_cfg, device=device)
     critic = Critic(env.obs_dim, env.priv_dim).to(device)
-    opt = torch.optim.Adam([{"params": pol.parameters(), "lr": ppo_cfg.lr},
-                            {"params": critic.parameters(), "lr": args.critic_lr, "name": "critic"}])
+    # Taxas relativas por grupo, medidas pela sensibilidade da ação média a cada grupo: o
+    # codificador (proprioceptores abaixo do limiar) é ~40 vezes menos sensível que a rede.
+    mults = {"rede": 1.0, "codificador": args.enc_lr_mult, "tonus": 3.0, "decodificador": 1.0, "comando": 10.0,
+             "exploracao": 1.0}
+    groups = [{"params": ps, "lr": ppo_cfg.lr * mults[name], "mult": mults[name], "name": name}
+              for name, ps in pol.param_groups().items()]
+    assert sum(p.numel() for g in groups for p in g["params"]) == sum(p.numel() for p in pol.parameters())
+    opt = torch.optim.Adam(groups + [{"params": critic.parameters(), "lr": args.critic_lr, "name": "critic"}])
     norm_obs, norm_priv = RunningNorm(env.obs_dim), RunningNorm(env.priv_dim)
     state = {"it": 0, "v_max": args.v_start, "lr": ppo_cfg.lr, "total_steps": 0, "attempts": 0}
     beta = float(np.exp(-env_cfg.control_dt / args.noise_tau)) if args.noise_tau > 0 else 0.0

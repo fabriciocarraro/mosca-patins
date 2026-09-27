@@ -126,12 +126,22 @@ class ConnectomePolicy(nn.Module):
         self.register_buffer("dec_sign", torch.as_tensor(sign, dtype=torch.float32, device=device))
         free = sign == 0
         self.register_buffer("dec_free", torch.as_tensor(free, device=device))
-        # Ganho ≥ 0 (em log) para músculos identificados; peso livre (qualquer sinal, começa em 0)
-        # para os motores sem músculo identificado.
+        # Ganho ≥ 0 (em log) para músculos identificados; peso livre (qualquer sinal, começa em 0,
+        # na escala dec_gain) para os motores sem músculo identificado. Sem a escala, os pesos
+        # livres eram 330 vezes mais sensíveis que os ganhos e dominavam a divergência KL do PPO.
         init = float(np.log(cfg.dec_gain))
         self.dec_raw = nn.Parameter(torch.where(torch.as_tensor(free), torch.zeros(len(sign)), torch.full((len(sign),), init)).to(device))
         self.dec_bias = nn.Parameter(torch.zeros(6 * N_JOINTS, device=device))
         self.log_std = nn.Parameter(torch.full((6 * N_JOINTS,), float(np.log(cfg.init_std)), device=device))
+
+    def param_groups(self) -> dict[str, list[nn.Parameter]]:
+        """Parâmetros por grupo, para taxas de aprendizado relativas (ver connectome_train.py)."""
+        return {"rede": [self.net.log_a, self.net.log_theta, self.net.log_tau],
+                "codificador": list(self.enc_w) + list(self.enc_b),
+                "tonus": [self.motor_bias],
+                "decodificador": [self.dec_raw, self.dec_bias],
+                "comando": [self.log_walk_gain],
+                "exploracao": [self.log_std]}
 
     @property
     def device(self) -> torch.device:
@@ -154,7 +164,7 @@ class ConnectomePolicy(nn.Module):
 
     def decode(self, r: torch.Tensor) -> torch.Tensor:
         """Ação média (lote, 42) a partir das taxas (N, lote)."""
-        weight = torch.where(self.dec_free, self.dec_raw, self.dec_sign * self.dec_raw.exp())
+        weight = torch.where(self.dec_free, self.cfg.dec_gain * self.dec_raw, self.dec_sign * self.dec_raw.exp())
         contrib = weight[:, None] * r[self.dec_motor]
         out = torch.zeros(6 * N_JOINTS, r.shape[1], device=self.device).index_add(0, self.dec_out, contrib)
         return out.T + self.dec_bias

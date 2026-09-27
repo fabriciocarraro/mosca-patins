@@ -7,7 +7,9 @@ tempo). O crítico é uma MLP sem memória que vê a observação e o estado pri
 
 O passo é controlado como em ppo.py: taxa fixa dentro da iteração, épocas interrompidas se
 a divergência KL passa de `kl_stop` × alvo, e ajuste da taxa uma vez por iteração. Aqui o
-ajuste vale só para o ator: o crítico tem taxa própria (grupo "critic" do otimizador) e o
+ajuste vale só para o ator (cada grupo com o seu multiplicador "mult", porque a saída é
+muito mais sensível a uns parâmetros que a outros): o crítico tem taxa própria (grupo
+"critic" do otimizador) e o
 corte de gradiente é separado, para o gradiente grande do crítico no começo não encolher o
 do ator.
 """
@@ -88,7 +90,7 @@ def recurrent_ppo_update(policy: nn.Module, critic: Critic, opt: torch.optim.Opt
     old_std = ro.log_std.exp()
     for group in opt.param_groups:
         if group.get("name") != "critic":
-            group["lr"] = lr
+            group["lr"] = lr * group.get("mult", 1.0)
     actor_params = list(policy.parameters())
     critic_params = list(critic.parameters())
     stats = {"policy_loss": [], "value_loss": [], "kl": [], "clip_frac": [], "grad_actor": []}
