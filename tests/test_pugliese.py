@@ -3,7 +3,7 @@ import pytest
 import scipy.sparse as sp
 
 from mosca.brain.pugliese import (SYNAPSE_COUNTS, NeuronParams, RateNet, estimate_sizes, neuron_score, rhythm,
-                                  sample_params, simulate)
+                                  sample_params, signed_matrix, simulate)
 from mosca.paths import MALECNS_DIR, PUGLIESE_DIR
 
 HAS_PUGLIESE = (PUGLIESE_DIR / "W_20260210_vncRoisOnly.csv").exists()
@@ -80,3 +80,25 @@ def test_estimated_sizes_keep_the_rhythm_and_shuffled_sizes_break_it():
     good = score(sizes)
     assert good.score > 0.9 and 7.0 <= good.freq_hz <= 15.0
     assert score(np.random.default_rng(1).permutation(real)).score < 0.5
+
+
+GRAPH = MALECNS_DIR / "controller_graph_min5.npz"
+
+
+@pytest.mark.skipif(not (HAS_PUGLIESE and HAS_COUNTS and GRAPH.exists()),
+                    reason="faltam o grafo do controlador, a rede de Pugliese ou as contagens de sinapses")
+def test_dng100_rhythm_on_the_six_leg_graph():
+    from mosca.body.fly import LEGS
+    from mosca.brain.graph import Connectome
+
+    c = Connectome.load(GRAPH)
+    sizes, _, _ = estimate_sizes(c.body_id)
+    motor = np.concatenate([c.groups[f"motor_{leg}"] for leg in LEGS])
+    current = np.zeros(c.n)
+    current[c.groups["DNg100_R"]] = 400.0
+    net = RateNet(signed_matrix(c, "consensus"),
+                  sample_params(sizes, np.random.default_rng(0), reference=1.30 * np.nanmedian(sizes)))
+    rec = simulate(net, current, record=motor)
+    res = rhythm(rec.rates, rec.peak)
+    assert res.score > 0.5 and 7.0 <= res.freq_hz <= 15.0
+    assert 3 <= res.active_motor <= 30 and res.active < 1000  # ritmo localizado, sem disparo descontrolado

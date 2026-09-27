@@ -1,7 +1,10 @@
 """Grafo do conectoma para o controlador das patas (MaleCNS v1.0).
 
 Recorte: cordão nervoso (intrínsecos, sensoriais, motores, eferentes) mais os neurônios
-descendentes e ascendentes, com ligações de pelo menos `min_synapses` sinapses. O sinal de
+descendentes e ascendentes, com ligações de pelo menos `min_synapses` sinapses. Por padrão,
+só contam as sinapses dentro das regiões do cordão nervoso (como em Pugliese et al.): as que
+descendentes e ascendentes trocam no cérebro, que não é simulado, formavam laços que faziam
+a rede disparar sem controle (scripts/m3_vnc_weights.py gera essa contagem). O sinal de
 cada ligação vem do neurotransmissor do neurônio pré-sináptico: acetilcolina excita, GABA
 e glutamato inibem (como em Pugliese et al.). Para "incerto", usa a previsão por tipo
 celular e depois a individual; outros transmissores (serotonina, histamina, etc.) ficam de
@@ -26,6 +29,7 @@ from mosca.paths import MALECNS_DIR
 ANNOTATIONS = "body-annotations-male-cns-v1.0-minconf-0.5.feather"
 NEUROTRANSMITTERS = "body-neurotransmitters-male-cns-v1.0.feather"
 WEIGHTS = "connectome-weights-male-cns-v1.0-minconf-0.5.feather"
+WEIGHTS_VNC = "connectome-weights-vnc.feather"  # pares do recorte; weight_vnc = sinapses no cordão nervoso
 
 REGION = ("vnc_intrinsic", "vnc_sensory", "vnc_motor", "vnc_efferent",
           "ascending_neuron", "sensory_ascending", "descending_neuron")
@@ -43,7 +47,7 @@ class Connectome:
     cell_type: np.ndarray  # (N,) texto ("" sem tipo)
     side: np.ndarray  # (N,) "L", "R" ou ""
     sign: np.ndarray  # (N,) +1, -1 ou 0 (sem ligação rápida)
-    in_synapses: np.ndarray  # (N,) total de sinapses recebidas (de qualquer parceiro, sem limiar)
+    in_synapses: np.ndarray  # (N,) sinapses recebidas (de qualquer parceiro contado, sem limiar)
     pre: np.ndarray  # (E,) índices
     post: np.ndarray  # (E,) índices
     count: np.ndarray  # (E,) nº de sinapses
@@ -94,12 +98,16 @@ def _reaches(targets: np.ndarray, pre: np.ndarray, post: np.ndarray, n: int) -> 
     return seen
 
 
-def build_connectome(min_synapses: int = 5, data_dir: Path = MALECNS_DIR) -> Connectome:
+def build_connectome(min_synapses: int = 5, data_dir: Path = MALECNS_DIR, vnc_only: bool = True) -> Connectome:
     ann = pd.read_feather(data_dir / ANNOTATIONS)
     ann = ann[ann.superclass.isin(REGION)].reset_index(drop=True)
     nt = pd.read_feather(data_dir / NEUROTRANSMITTERS)
 
-    weights = pd.read_feather(data_dir / WEIGHTS, columns=["body_pre", "body_post", "weight"])
+    if vnc_only:
+        weights = pd.read_feather(data_dir / WEIGHTS_VNC, columns=["body_pre", "body_post", "weight_vnc"])
+        weights = weights.rename(columns={"weight_vnc": "weight"})
+    else:
+        weights = pd.read_feather(data_dir / WEIGHTS, columns=["body_pre", "body_post", "weight"])
     region_ids = ann.bodyId.to_numpy()
     in_syn = weights[weights.body_post.isin(region_ids)].groupby("body_post").weight.sum()
     weights = weights[(weights.weight >= min_synapses) & weights.body_pre.isin(region_ids) & weights.body_post.isin(region_ids)]

@@ -2,14 +2,21 @@
 
 Mesma receita de Pugliese et al. (parâmetros, escala pelo volume, RK4 de 1 ms, nota de
 oscilação), aplicada à rede que o controlador vai usar: o cordão nervoso inteiro ligado às
-patas, mais os neurônios descendentes e ascendentes. Diferenças para a rede deles (só a
-pata da frente): as seis patas; ligações contadas no sistema nervoso inteiro, porque os
-arquivos abertos não separam por região; e volume estimado pelas sinapses para os
-neurônios fora da tabela deles.
+patas, mais os neurônios descendentes e ascendentes, só com as sinapses do cordão nervoso.
+O volume vem da tabela deles quando existe e é estimado pelas sinapses no resto.
+
+Diferença que precisa de calibração: o volume entra relativo a uma referência. No código
+deles é a mediana da rede simulada; a nossa tem outra composição (seis patas, mais
+sensoriais) e, com a mediana própria, fica em silêncio. `--size-ref` multiplica essa
+mediana: um único fator global de excitabilidade. Resultado (DNg100 direito, corrente 400):
+1,20× quase silêncio; 1,30× ritmo em 100% das réplicas (~10 Hz, ~7 motores ativos, na pata
+da frente e do meio esquerdas, como no experimento publicado); 1,40× disparo descontrolado.
+Com os dois DNg100 estimulados não há faixa rítmica (do silêncio direto ao disparo): a
+fiação sozinha não coordena as seis patas.
 
 Uso:
     python scripts/download_assets.py --malecns --pugliese --malecns-stats
-    python scripts/m3_build_graph.py
+    python scripts/m3_vnc_weights.py && python scripts/m3_build_graph.py
     python scripts/m3_rhythm_full.py --stim DNg100_R --replicates 4
 """
 
@@ -21,27 +28,13 @@ import time
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import scipy.sparse as sp
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from mosca.body.fly import LEGS  # noqa: E402
-from mosca.brain.graph import FAST_SIGN, NEUROTRANSMITTERS, Connectome  # noqa: E402
-from mosca.brain.pugliese import RateNet, estimate_sizes, rhythm, sample_params, simulate  # noqa: E402
+from mosca.brain.graph import Connectome  # noqa: E402
+from mosca.brain.pugliese import RateNet, estimate_sizes, rhythm, sample_params, signed_matrix, simulate  # noqa: E402
 from mosca.paths import MALECNS_DIR  # noqa: E402
-
-
-def signed_matrix(c: Connectome, signs: str) -> sp.csr_matrix:
-    """Pós × pré com sinal × nº de sinapses. "consensus": só o transmissor de consenso, como
-    Pugliese; "graph": o sinal do grafo, que completa os incertos pela previsão."""
-    if signs == "consensus":
-        nt = pd.read_feather(MALECNS_DIR / NEUROTRANSMITTERS, columns=["body", "consensus_nt"]).set_index("body")
-        sign = nt.consensus_nt.reindex(c.body_id).map(FAST_SIGN).fillna(0).to_numpy()
-    else:
-        sign = c.sign.astype(float)
-    values = sign[c.pre] * c.count
-    keep = values != 0
-    return sp.csr_matrix((values[keep], (c.post[keep], c.pre[keep])), shape=(c.n, c.n))
 
 
 def leg_phases(rates: np.ndarray, groups: list[np.ndarray], period: int, skip: int) -> np.ndarray:
@@ -71,6 +64,8 @@ def main() -> None:
     parser.add_argument("--signs", choices=("consensus", "graph"), default="consensus")
     parser.add_argument("--sizes", choices=("mixed", "estimated"), default="mixed",
                         help="mixed: volume real onde Pugliese tem; estimated: todos estimados")
+    parser.add_argument("--size-ref", type=float, default=1.30,
+                        help="referência do volume, em múltiplos da mediana da rede (1 = como no código deles)")
     parser.add_argument("--replicates", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--seconds", type=float, default=2.0)
@@ -79,9 +74,10 @@ def main() -> None:
     c = Connectome.load(Path(args.graph))
     w = signed_matrix(c, args.signs)
     sizes, estimated, model = estimate_sizes(c.body_id, use_real=args.sizes == "mixed")
+    reference = args.size_ref * np.nanmedian(sizes)
     print(f"grafo: {c.n} neurônios, {w.nnz:,} ligações com sinal ({args.signs}); "
           f"volume real de {int((~estimated).sum())}, estimado para {int(estimated.sum())} "
-          f"(ajuste r = {model.r:.2f}, erro típico ×{model.spread:.2f})")
+          f"(ajuste r = {model.r:.2f}, erro típico ×{model.spread:.2f}); referência {args.size_ref:g}× a mediana")
 
     motor_groups = [c.groups[f"motor_{leg}"] for leg in LEGS]
     motor = np.concatenate(motor_groups)
@@ -94,7 +90,7 @@ def main() -> None:
 
     h, skip = 1e-3, 0.25
     for k in range(args.replicates):
-        net = RateNet(w, sample_params(sizes, np.random.default_rng(args.seed + k)))
+        net = RateNet(w, sample_params(sizes, np.random.default_rng(args.seed + k), reference=reference))
         t0 = time.perf_counter()
         rec = simulate(net, current, seconds=args.seconds, h=h, record=motor)
         whole = rhythm(rec.rates, rec.peak, h, skip)

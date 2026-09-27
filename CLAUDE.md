@@ -20,8 +20,10 @@ cada etapa está no README.
 ## Comandos
 
 - Testes: `python -m pytest -q`
-- Assets (não versionados): `python scripts/download_assets.py --walking-sample`
+- Assets (não versionados): `python scripts/download_assets.py --walking-sample --malecns --pugliese --malecns-stats`
 - Física: `scripts/bench_physics.py`, `scripts/m1_skate_physics.py`, `scripts/m1_gait_search.py`
+- Treino M2 (no Spark, com `nice`): `scripts/m2_train.py --run NOME`; avaliação: `scripts/m2_eval.py`
+- Cérebro M3: `scripts/m3_vnc_weights.py` e `scripts/m3_build_graph.py` (Spark), `scripts/m3_rhythm_full.py`
 
 ## Regras do projeto
 
@@ -41,3 +43,11 @@ cada etapa está no README.
 - As patas giram pouco o patim (±15° na frente, 5–15° só para fora no meio e atrás).
   Alavancas se o deslize não surgir: ângulo de montagem com a ponta para fora, comprimento
   do patim, atrito de rolamento.
+- M2: antes de mudar hiperparâmetros, olhe a política (`m2_eval.py --sheet`, com e sem
+  `--stochastic`). Duas armadilhas já vistas: ruído de exploração que faz a mosca andar
+  sozinho (a política média fica parada) e termos de recompensa que pagam por ficar parada.
+  A avaliação do treino usa a velocidade já liberada pelo currículo.
+- M3: o modelo de Pugliese só oscila numa faixa estreita de excitabilidade. Contam só as
+  sinapses do cordão nervoso (as do cérebro entre descendentes e ascendentes fazem a rede
+  disparar), o volume vem da tabela deles ou da estimativa pelas sinapses, e a referência do
+  volume é 1,30× a mediana do nosso grafo (com a mediana própria, silêncio; com 1,40×, disparo).

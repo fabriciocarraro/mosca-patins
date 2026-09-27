@@ -1,8 +1,12 @@
 """M3: monta o grafo do controlador a partir do MaleCNS e confere as contagens.
 
-Uso (precisa de ~6 GB de memória para ler as ligações; rode no Spark):
-    python scripts/download_assets.py --malecns --malecns-weights
-    python scripts/m3_build_graph.py --min-synapses 5
+Uso (rode no Spark):
+    python scripts/download_assets.py --malecns
+    python scripts/m3_vnc_weights.py                   # sinapses do cordão nervoso (baixa 6,8 GB)
+    python scripts/m3_build_graph.py --min-synapses 5  # -> controller_graph_min5.npz
+
+    python scripts/download_assets.py --malecns-weights
+    python scripts/m3_build_graph.py --all-synapses    # sistema nervoso inteiro -> controller_graph_all_min5.npz
 """
 
 from __future__ import annotations
@@ -24,11 +28,13 @@ from mosca.paths import MALECNS_DIR  # noqa: E402
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--min-synapses", type=int, default=5)
+    parser.add_argument("--all-synapses", action="store_true",
+                        help="conta as sinapses do sistema nervoso inteiro, inclusive as do cérebro")
     args = parser.parse_args()
 
     t0 = time.perf_counter()
-    c = build_connectome(args.min_synapses)
-    out = MALECNS_DIR / f"controller_graph_min{args.min_synapses}.npz"
+    c = build_connectome(args.min_synapses, vnc_only=not args.all_synapses)
+    out = MALECNS_DIR / f"controller_graph{'_all' if args.all_synapses else ''}_min{args.min_synapses}.npz"
     c.save(out)
     print(f"grafo: {c.n:,} neurônios, {len(c.pre):,} ligações (≥{args.min_synapses} sinapses), "
           f"{int(c.count.sum()):,} sinapses ({time.perf_counter() - t0:.0f} s) -> {out}")

@@ -26,6 +26,7 @@ import scipy.sparse as sp
 from scipy.signal import correlate
 from scipy.special import ndtr, ndtri
 
+from mosca.brain.graph import FAST_SIGN, NEUROTRANSMITTERS, Connectome
 from mosca.paths import MALECNS_DIR, PUGLIESE_DIR
 
 B = 0.03
@@ -111,6 +112,19 @@ def estimate_sizes(body_ids: np.ndarray, use_real: bool = True, pugliese_dir: Pa
     guess[~(syn_own > 0)] = np.nan  # sem sinapse conhecida: sample_params usa a mediana
     estimated = ~(own > 0) if use_real else np.ones(len(body_ids), dtype=bool)
     return np.where(estimated, guess, own), estimated, model
+
+
+def signed_matrix(c: Connectome, signs: str = "consensus", data_dir: Path = MALECNS_DIR) -> sp.csr_matrix:
+    """Pós × pré com sinal × nº de sinapses. "consensus": só o transmissor de consenso, como
+    Pugliese; "graph": o sinal do grafo, que completa os incertos pela previsão."""
+    if signs == "consensus":
+        nt = pd.read_feather(data_dir / NEUROTRANSMITTERS, columns=["body", "consensus_nt"]).set_index("body")
+        sign = nt.consensus_nt.reindex(c.body_id).map(FAST_SIGN).fillna(0).to_numpy()
+    else:
+        sign = c.sign.astype(float)
+    values = sign[c.pre] * c.count
+    keep = values != 0
+    return sp.csr_matrix((values[keep], (c.post[keep], c.pre[keep])), shape=(c.n, c.n))
 
 
 class RateNet:
