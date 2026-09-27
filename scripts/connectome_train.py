@@ -140,8 +140,8 @@ def main() -> None:
         print(f"retomando da iteração {state['it']}")
     else:
         # Saída de repouso = postura canônica: calibra com a mosca parada, no meio da faixa de comandos.
-        obs_rest, _ = env.reset(np.arange(n_calib := min(8, env.n)) + 10**8, np.full(n_calib, args.v_start))
-        pol.calibrate_rest(to_dev(obs_rest[:n_calib], device), 0.65 * args.v_start)
+        obs_rest, _ = env.reset(np.arange(env.n) + 10**8, np.full(env.n, args.v_start))
+        pol.calibrate_rest(to_dev(obs_rest[:8], device), 0.65 * args.v_start)
         (run_dir / "config.json").write_text(json.dumps(
             {"args": vars(args), "env": asdict(env_cfg), "controller": asdict(ctrl_cfg), "ppo": asdict(ppo_cfg),
              "neurons": graph.n, "trainable": sum(p.numel() for p in pol.parameters()),
