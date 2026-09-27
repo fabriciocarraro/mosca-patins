@@ -10,6 +10,9 @@ que vê o estado completo do simulador, como na MLP.
 A rede roda na GPU (`--device cuda`), com a memória limitada por `--max-gpu-mem-gb`; a
 física continua na CPU, em threads.
 
+Com `--capture`, cada iteração grava em runs/<nome>/capture/ as ações de todas as tentativas
+(re-simuláveis bit a bit por scripts/replay_attempt.py) e a versão da política usada na coleta.
+
 Uso (no Spark):
     python scripts/connectome_train.py --run conectoma_a --iters 300 --device cuda
     python scripts/connectome_train.py --run conectoma_a --iters 600 --device cuda --resume
@@ -30,6 +33,7 @@ from torch.distributions import Normal
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from mosca.brain.controller import ConnectomePolicy, ControllerConfig  # noqa: E402
+from mosca.capture import Recorder, library_versions  # noqa: E402
 from mosca.brain.graph import Connectome  # noqa: E402
 from mosca.env.skate_env import EnvConfig, RewardConfig, SkateVecEnv, attempt_seed  # noqa: E402
 from mosca.paths import MALECNS_DIR, RUNS  # noqa: E402
@@ -67,6 +71,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--eval-speed", type=float, default=3.0)
     p.add_argument("--save-every", type=int, default=10)
     p.add_argument("--resume", action="store_true")
+    p.add_argument("--capture", action="store_true", help="grava as tentativas para re-simulação (M5/M6)")
     cc = ControllerConfig()
     for name in ("size_ref", "walk_gain", "enc_std", "dec_gain", "init_std"):
         p.add_argument(f"--{name.replace('_', '-')}", type=float, default=getattr(cc, name))
@@ -104,6 +109,7 @@ def main() -> None:
         torch.cuda.set_per_process_memory_fraction(min(1.0, args.max_gpu_mem_gb * 2**30 / total), device)
     run_dir = RUNS / args.run
     (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
+    (run_dir / "capture").mkdir(exist_ok=True)
 
     reward_cfg = RewardConfig(**{name: getattr(args, name) for name in REWARD_FLAGS})
     env_cfg = EnvConfig(n_envs=args.envs, n_threads=args.threads, episode_seconds=args.episode_seconds,
@@ -135,7 +141,8 @@ def main() -> None:
     else:
         (run_dir / "config.json").write_text(json.dumps(
             {"args": vars(args), "env": asdict(env_cfg), "controller": asdict(ctrl_cfg), "ppo": asdict(ppo_cfg),
-             "neurons": graph.n, "trainable": sum(p.numel() for p in pol.parameters())}, indent=2), encoding="utf-8")
+             "neurons": graph.n, "trainable": sum(p.numel() for p in pol.parameters()),
+             "versions": library_versions()}, indent=2), encoding="utf-8")
 
     def save(path):
         tmp = path.with_suffix(".tmp")
@@ -158,6 +165,9 @@ def main() -> None:
         push = np.where(rng.random(n) < p_push, v_cmd, 0.0)
         obs, priv = env.reset(attempts, v_cmd, push)
         gen = torch.Generator().manual_seed(attempt_seed(args.seed, -1 - it))
+        recorder = Recorder(env, it, attempts, v_cmd, push) if args.capture else None
+        if args.capture:  # versão da política desta coleta (antes da atualização)
+            torch.save(pol.state_dict(), run_dir / "capture" / f"policy_it{it:05d}.pt")
 
         T, A = horizon, env.act_dim
         buf = {"obs": torch.zeros(T, n, env.obs_dim, device=device),
@@ -197,13 +207,18 @@ def main() -> None:
                 valid[t] = alive
                 raw_obs.append(obs[alive])
                 raw_priv.append(priv[alive])
-                obs, priv, reward, term, trunc = env.step(action.cpu().numpy())
+                action_np = action.cpu().numpy()
+                if recorder is not None:
+                    recorder.before_step(action_np)
+                obs, priv, reward, term, trunc = env.step(action_np)
                 rew[t] = reward * ppo_cfg.reward_scale
                 terminal |= term
                 last_obs[trunc], last_priv[trunc] = obs[trunc], priv[trunc]
                 steps = t + 1
             last_val = critic(to_dev(norm_obs(last_obs), device), to_dev(norm_priv(last_priv), device)).cpu().numpy()
         t_collect = time.perf_counter() - t0
+        if recorder is not None:
+            recorder.finish().save(run_dir / "capture" / f"it{it:05d}.npz")
 
         adv, ret = compute_gae(rew[:steps], val[:steps], valid[:steps], terminal, last_val, ppo_cfg.gamma, ppo_cfg.lam)
         ro = Rollout(obs=buf["obs"][:steps], obs_norm=buf["obs_norm"][:steps], priv_norm=buf["priv_norm"][:steps],

@@ -51,7 +51,8 @@ O PyTorch entra à parte: a versão para CPU no notebook e a cu130 no Spark.
 | `python scripts/m3_rhythm_test.py` | M3: ritmo do DNg100 na rede de Pugliese et al. |
 | `python scripts/m3_rhythm_full.py` | M3: ritmo do DNg100 no grafo de 6 patas |
 | `python scripts/m3_bench_brain.py --device cuda` | M3: custo da rede por passo de controle (coleta e gradiente) |
-| `python scripts/connectome_train.py --run NOME --device cuda` | conectoma aprende a patinar por PPO (rede na GPU, física na CPU) |
+| `python scripts/connectome_train.py --run NOME --device cuda` | conectoma aprende a patinar por PPO (rede na GPU, física na CPU; `--capture` grava as tentativas) |
+| `python scripts/replay_attempt.py --run NOME --attempt N --gif saida.gif` | re-simula a tentativa N bit a bit a partir da captura e grava um GIF |
 
 ## Estrutura
 
@@ -70,6 +71,7 @@ src/mosca/brain/rate_model.py  rede de Pugliese em torch (lote, RK4, fatores por
 src/mosca/brain/muscles.py  tabela músculo → junta com sinal fixo (decodificador por pata)
 src/mosca/brain/controller.py  controlador de conectoma: codificador por pata, comando no DNg100, decodificador pelos músculos
 src/mosca/rl/recurrent_ppo.py  PPO com ator recorrente (trechos de retropropagação truncada)
+src/mosca/capture.py       captura fiel das tentativas e re-simulação bit a bit
 ```
 
 ## Créditos e licenças
