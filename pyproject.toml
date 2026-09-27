@@ -18,6 +18,10 @@ dependencies = [
 dev = ["pytest>=8"]
 render = ["pillow>=10"]
 data = ["remotezip>=0.12", "h5py>=3.10"]
+search = ["cma>=4"]
+# PyTorch fica fora das dependências porque a roda certa depende da máquina:
+#   notebook (CPU):  pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   DGX Spark:       pip install torch --index-url https://download.pytorch.org/whl/cu130
 
 [tool.setuptools.packages.find]
 where = ["src"]
