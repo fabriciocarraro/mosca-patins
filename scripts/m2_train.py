@@ -6,6 +6,11 @@ velocidade média perto da pedida. Ajuda opcional: parte das tentativas começa 
 (empurrão inicial), com probabilidade que cai de 50% a zero em `--push-iters` iterações.
 Tentativas a partir do repouso nunca somem, e cada tentativa registra se teve empurrão.
 
+Exploração: ruído correlacionado no tempo (constante `--noise-tau`), porque ruído branco a
+100 Hz faz as patas vibrarem, e a vibração sozinha empurra a mosca sobre os patins (a
+política parecia andar só por causa do ruído). A cada `--eval-every` iterações, os testes
+fixos rodam sem ruído, e o resultado entra em metrics.jsonl com o prefixo eval_.
+
 Saídas em runs/<nome>/: config.json, metrics.jsonl (uma linha por iteração),
 attempts.jsonl (uma linha por tentativa), checkpoints/ e latest.pt.
 
@@ -27,9 +32,13 @@ import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from mosca.env.skate_env import EnvConfig, SkateVecEnv, attempt_seed  # noqa: E402
+from mosca.env.skate_env import EnvConfig, RewardConfig, SkateVecEnv, attempt_seed  # noqa: E402
 from mosca.paths import RUNS  # noqa: E402
 from mosca.rl.ppo import ActorCritic, PPOConfig, RunningNorm, compute_gae, ppo_update  # noqa: E402
+
+TEST_ATTEMPT_BASE = 10**9  # tentativas de teste: nunca aparecem no treino
+REWARD_FLAGS = ("w_vel", "sigma_vel", "sigma_vel_rel", "w_yaw", "w_up", "w_roll", "sigma_roll", "w_slip",
+                "w_cot", "w_rate", "w_leg_floor", "w_contact")
 
 
 def parse_args() -> argparse.Namespace:
@@ -46,9 +55,28 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--v-final", type=float, default=6.0, help="cm/s")
     p.add_argument("--v-step", type=float, default=0.5, help="cm/s")
     p.add_argument("--push-iters", type=int, default=200)
+    p.add_argument("--init-std", type=float, default=0.25)
+    p.add_argument("--noise-tau", type=float, default=0.05, help="s; 0 = ruído branco")
+    p.add_argument("--eval-every", type=int, default=25)
+    p.add_argument("--eval-speed", type=float, default=3.0)
     p.add_argument("--save-every", type=int, default=25)
     p.add_argument("--resume", action="store_true")
+    defaults = RewardConfig()
+    for name in REWARD_FLAGS:
+        p.add_argument(f"--{name.replace('_', '-')}", type=float, default=getattr(defaults, name))
     return p.parse_args()
+
+
+def evaluate(env: SkateVecEnv, ac: ActorCritic, norm_obs: RunningNorm, speed: float) -> dict:
+    """Testes fixos, sem ruído, a partir do repouso (os mesmos em toda avaliação)."""
+    obs, _ = env.reset(TEST_ATTEMPT_BASE + np.arange(env.n), np.full(env.n, speed))
+    while env.alive.any():
+        with torch.no_grad():
+            action = ac.actor(torch.from_numpy(norm_obs(obs).astype(np.float32))).numpy()
+        obs, *_ = env.step(action)
+    eps = env.episode_stats()
+    return {f"eval_{k}": float(np.nanmean([e[k] for e in eps]))
+            for k in ("speed", "rolling", "glide_frac", "fell", "seconds", "grounded_frac", "cot")}
 
 
 def save(path: Path, ac, opt, norm_obs, norm_priv, state, env_cfg, args) -> None:
@@ -65,11 +93,13 @@ def main() -> None:
     run_dir = RUNS / args.run
     (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
 
+    reward_cfg = RewardConfig(**{name: getattr(args, name) for name in REWARD_FLAGS})
     env_cfg = EnvConfig(n_envs=args.envs, n_threads=args.threads, control_dt=args.control_dt,
-                        episode_seconds=args.episode_seconds, seed=args.seed)
+                        episode_seconds=args.episode_seconds, seed=args.seed, reward=reward_cfg)
     ppo_cfg = PPOConfig()
     env = SkateVecEnv(env_cfg)
-    ac = ActorCritic(env.obs_dim, env.priv_dim, env.act_dim)
+    ac = ActorCritic(env.obs_dim, env.priv_dim, env.act_dim, init_std=args.init_std)
+    beta = float(np.exp(-args.control_dt / args.noise_tau)) if args.noise_tau > 0 else 0.0
     opt = torch.optim.Adam(ac.parameters(), lr=ppo_cfg.lr)
     norm_obs, norm_priv = RunningNorm(env.obs_dim), RunningNorm(env.priv_dim)
     state = {"it": 0, "v_max": args.v_start, "lr": ppo_cfg.lr, "total_steps": 0, "attempts": 0}
@@ -110,6 +140,7 @@ def main() -> None:
         terminal = np.zeros(n, bool)
         last_obs, last_priv = np.zeros((n, env.obs_dim)), np.zeros((n, env.priv_dim))
         log_std = ac.log_std.detach().clone()
+        noise = torch.randn((n, env.act_dim), generator=gen)
 
         steps = 0
         for t in range(horizon):
@@ -121,7 +152,9 @@ def main() -> None:
             with torch.no_grad():
                 ot, pt = torch.from_numpy(o), torch.from_numpy(pr)
                 dist = ac.dist(ot)
-                action = dist.mean + dist.stddev * torch.randn(dist.mean.shape, generator=gen)
+                if t > 0:  # ruído correlacionado: cada passo herda parte do anterior (variância 1 mantida)
+                    noise = beta * noise + np.sqrt(1 - beta**2) * torch.randn((n, env.act_dim), generator=gen)
+                action = dist.mean + dist.stddev * noise
                 buf["logp"][t] = dist.log_prob(action).sum(-1).numpy()
                 buf["val"][t] = ac.value(ot, pt).numpy()
             buf["obs"][t], buf["priv"][t] = o, pr
@@ -165,8 +198,15 @@ def main() -> None:
         metrics = {"it": it, "steps": state["total_steps"], "attempts": state["attempts"], "v_max": v_max,
                    "p_push": p_push, "return": mean("return"), "seconds": mean("seconds"),
                    "fell": mean("fell"), "speed": mean("speed"), "rolling": mean("rolling"),
-                   "glide_frac": mean("glide_frac"), "success": success, "lr": state["lr"],
-                   "std": float(ac.log_std.detach().exp().mean()), "time": time.perf_counter() - t0, **stats}
+                   "glide_frac": mean("glide_frac"), "grounded_frac": mean("grounded_frac"), "success": success,
+                   "lr": state["lr"], "std": float(ac.log_std.detach().exp().mean()),
+                   "time": time.perf_counter() - t0, **stats}
+        if args.eval_every and (it + 1) % args.eval_every == 0:
+            ev = evaluate(env, ac, norm_obs, args.eval_speed)
+            metrics.update(ev)
+            print(f"      avaliação sem ruído a {args.eval_speed:g} cm/s: vel {ev['eval_speed']:.2f}, rolamento "
+                  f"{ev['eval_rolling']:.2f}, desliza {ev['eval_glide_frac']:.2f}, quedas {ev['eval_fell']:.0%}, "
+                  f"patins no chão {ev['eval_grounded_frac']:.2f}", flush=True)
         with open(run_dir / "metrics.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(metrics) + "\n")
         with open(run_dir / "attempts.jsonl", "a", encoding="utf-8") as f:

@@ -46,6 +46,7 @@ def policy(ac: ActorCritic, norm: RunningNorm, obs: np.ndarray) -> np.ndarray:
 
 
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # terminais do Windows (cp1252) e "≥"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("checkpoint")
     parser.add_argument("--tests", type=int, default=20)
@@ -62,9 +63,10 @@ def main() -> None:
     episodes = env.episode_stats()
 
     print(f"checkpoint: iteração {state['it']}, {state['attempts']} tentativas de treino, v_max {state['v_max']:.1f} cm/s")
-    print(" teste  dur(s)  queda  vel(cm/s)  rolamento  desliza")
+    print(" teste  dur(s)  queda  vel(cm/s)  rolamento  desliza  patins no chão  custo de transporte")
     for k, e in enumerate(episodes):
-        print(f"  {k:4d}  {e['seconds']:6.2f}  {'sim' if e['fell'] else 'não':>5}  {e['speed']:9.2f}  {e['rolling']:9.2f}  {e['glide_frac']:7.2f}")
+        print(f"  {k:4d}  {e['seconds']:6.2f}  {'sim' if e['fell'] else 'não':>5}  {e['speed']:9.2f}  {e['rolling']:9.2f}"
+              f"  {e['glide_frac']:7.2f}  {e['grounded_frac']:14.2f}  {e['cot']:19.1f}")
     fast = np.mean([not e["fell"] and e["seconds"] >= env.cfg.episode_seconds - 1e-9 and e["speed"] >= args.speed for e in episodes])
     glide = np.mean([e["glide_frac"] for e in episodes])
     falls = np.mean([e["fell"] for e in episodes])

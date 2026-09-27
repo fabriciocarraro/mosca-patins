@@ -32,7 +32,8 @@ BODY_PARTS = ("thorax", "head", "rostrum", "haustellum", "labrum", "antenna", "w
 @dataclass(frozen=True)
 class RewardConfig:
     w_vel: float = 1.0
-    sigma_vel: float = 1.0  # cm/s
+    sigma_vel: float = 1.0  # cm/s; tolerância = sigma_vel + sigma_vel_rel·v_pedida
+    sigma_vel_rel: float = 0.0
     w_yaw: float = 0.3
     sigma_yaw: float = 1.0  # rad/s
     w_up: float = 0.2
@@ -42,6 +43,7 @@ class RewardConfig:
     w_cot: float = 0.0  # custo de transporte; liga depois do primeiro movimento
     w_rate: float = 0.01  # mudança brusca de ação
     w_leg_floor: float = 0.1  # por segmento de pata encostado no chão
+    w_contact: float = 0.0  # fração dos 6 patins apoiados (desestimula levantar os patins para dar passos)
     ema_tau: float = 0.2  # s, média móvel da velocidade usada na recompensa
 
 
@@ -149,7 +151,7 @@ class SkateVecEnv:
             mujoco.mj_forward(self.model, d)
             self.stats[i] = {"attempt": int(attempt), "v_cmd": float(v_cmd[i]), "push": float(push[i]),
                              "distance": 0.0, "rolled": 0.0, "moved": 0.0, "glide_steps": 0,
-                             "return": 0.0, "fell": False, "leg_floor": 0}
+                             "return": 0.0, "fell": False, "leg_floor": 0, "work": 0.0, "grounded": 0.0}
         self.v_cmd[:] = v_cmd
         self.yaw_cmd[:] = 0.0
         self.ema_v[:] = push
@@ -231,7 +233,8 @@ class SkateVecEnv:
         terminated = terminated or not np.isfinite(d.qacc).all()
 
         # Recompensa
-        r_vel = np.exp(-(((self.ema_v[i] - self.v_cmd[i]) / rw.sigma_vel) ** 2))
+        sigma_vel = rw.sigma_vel + rw.sigma_vel_rel * self.v_cmd[i]
+        r_vel = np.exp(-(((self.ema_v[i] - self.v_cmd[i]) / sigma_vel) ** 2))
         r_yaw = np.exp(-(((yaw_rate - self.yaw_cmd[i]) / rw.sigma_yaw) ** 2))
         r_up = max(up_z, 0.0)
         if grounded.any() and self.v_cmd[i] >= 0.5:
@@ -242,7 +245,8 @@ class SkateVecEnv:
         power = np.abs(d.actuator_force[self.leg_act] * d.actuator_velocity[self.leg_act]).sum()
         cot = power / (self.weight * max(abs(v_fwd), 0.5))
         rate = float(np.mean((action - self.prev_action[i]) ** 2))
-        reward = (rw.w_vel * r_vel + rw.w_yaw * r_yaw + rw.w_up * r_up + rw.w_roll * r_roll
+        contact = float(grounded.mean())
+        reward = (rw.w_vel * r_vel + rw.w_yaw * r_yaw + rw.w_up * r_up + rw.w_roll * r_roll + rw.w_contact * contact
                   - rw.w_slip * slip - rw.w_cot * cot - rw.w_rate * rate - rw.w_leg_floor * leg_floor)
 
         # Estatísticas da tentativa
@@ -250,6 +254,8 @@ class SkateVecEnv:
             s = self.stats[i]
             s["distance"] += v_fwd * cfg.control_dt
             s["leg_floor"] += leg_floor
+            s["work"] += power * cfg.control_dt
+            s["grounded"] += contact
             if grounded.any():
                 speed = abs(v_fwd)
                 s["rolled"] += float(np.minimum(np.abs(along[grounded]), 1.2 * speed).sum())
@@ -278,6 +284,8 @@ class SkateVecEnv:
             s["speed"] = s["distance"] / s["seconds"]
             s["rolling"] = s["rolled"] / s["moved"] if s["moved"] > 0 else 0.0
             s["glide_frac"] = s["glide_steps"] / steps
+            s["grounded_frac"] = s["grounded"] / steps
+            s["cot"] = s["work"] / (self.weight * abs(s["distance"])) if abs(s["distance"]) > 1e-3 else float("nan")
             out.append(s)
         return out
 
