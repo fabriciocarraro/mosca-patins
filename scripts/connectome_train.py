@@ -73,7 +73,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--resume", action="store_true")
     p.add_argument("--capture", action="store_true", help="grava as tentativas para re-simulação (M5/M6)")
     cc = ControllerConfig()
-    for name in ("size_ref", "walk_gain", "enc_std", "dec_gain", "init_std"):
+    for name in ("size_ref", "walk_gain", "enc_std", "prop_offset", "motor_tone", "dec_gain", "init_std"):
         p.add_argument(f"--{name.replace('_', '-')}", type=float, default=getattr(cc, name))
     rc = RewardConfig(w_yaw=0.3, sigma_yaw=0.5)  # giro mais punido que na MLP (que virava ~25°/s)
     for name in REWARD_FLAGS:
@@ -115,8 +115,8 @@ def main() -> None:
     env_cfg = EnvConfig(n_envs=args.envs, n_threads=args.threads, episode_seconds=args.episode_seconds,
                         action_scale=args.action_scale, action_clip=args.action_clip, seed=args.seed, reward=reward_cfg)
     ctrl_cfg = ControllerConfig(size_ref=args.size_ref, walk_gain=args.walk_gain, enc_std=args.enc_std,
-                                dec_gain=args.dec_gain, init_std=args.init_std, control_dt=env_cfg.control_dt,
-                                seed=args.seed)
+                                prop_offset=args.prop_offset, motor_tone=args.motor_tone, dec_gain=args.dec_gain,
+                                init_std=args.init_std, control_dt=env_cfg.control_dt, seed=args.seed)
     ppo_cfg = RecurrentPPOConfig(target_kl=args.target_kl, epochs=args.epochs, chunk=args.chunk,
                                  minibatch_chunks=args.minibatch_chunks)
     env = SkateVecEnv(env_cfg)
@@ -139,6 +139,9 @@ def main() -> None:
         state = ckpt["state"]
         print(f"retomando da iteração {state['it']}")
     else:
+        # Saída de repouso = postura canônica: calibra com a mosca parada, no meio da faixa de comandos.
+        obs_rest, _ = env.reset(np.arange(n_calib := min(8, env.n)) + 10**8, np.full(n_calib, args.v_start))
+        pol.calibrate_rest(to_dev(obs_rest[:n_calib], device), 0.65 * args.v_start)
         (run_dir / "config.json").write_text(json.dumps(
             {"args": vars(args), "env": asdict(env_cfg), "controller": asdict(ctrl_cfg), "ppo": asdict(ppo_cfg),
              "neurons": graph.n, "trainable": sum(p.numel() for p in pol.parameters()),

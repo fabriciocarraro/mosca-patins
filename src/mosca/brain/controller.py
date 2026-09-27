@@ -18,10 +18,13 @@ a fiação do conectoma. A exploração do PPO soma ruído à ação média, com
 
 Ponto de partida: na referência de volume de 1,30× a mediana (a que dá o ritmo do DNg100
 sem treino), qualquer entrada sensorial leva a rede inteira a disparar sem controle. Na
-normalização padrão do código de Pugliese (1,0×, a mediana da própria rede) e com o
-codificador fraco, ela fica num regime calmo e responsivo: ~2.600 neurônios passam por
-atividade e ~14 motores por ambiente, com ação inicial quase nula (a mosca parada na
-postura, como a MLP). O gradiente substituto da rede deixa o PPO acordar os neurônios certos.
+normalização padrão do código de Pugliese (1,0×, a mediana da própria rede), com os
+proprioceptores logo abaixo do limiar (calados em repouso, ativos quando a pata se mexe) e
+um tônus de repouso treinável nos neurônios motores (que quase não mandam sinal de volta
+para a rede), ela responde ao movimento das patas sem disparar: ~2.200 neurônios ativos,
+motores a ~14 Hz. Sem o tônus, a mosca parada deixa a rede calada e o PPO não aprende nada.
+O viés do decodificador é calibrado para que a saída de repouso seja a postura canônica
+(ação zero, como a MLP começa); o gradiente substituto da rede alcança os neurônios calados.
 """
 
 from __future__ import annotations
@@ -49,7 +52,9 @@ class ControllerConfig:
     control_dt: float = 0.01
     walk_gain: float = 100.0  # corrente nos DNg100 por cm/s pedido, no início
     enc_std: float = 0.5  # desvio inicial dos pesos do codificador (corrente por unidade normalizada)
-    dec_gain: float = 0.005  # ação por Hz de cada neurônio motor, no início
+    prop_offset: float = -2.0  # viés inicial dos proprioceptores em relação ao limiar (abaixo = calados em repouso)
+    motor_tone: float = 1.0  # corrente de repouso inicial dos motores acima do limiar
+    dec_gain: float = 0.002  # ação por Hz de cada neurônio motor, no início (malha fechada estável)
     init_std: float = 0.6  # desvio inicial do ruído de exploração, em unidades de ação
     seed: int = 0
 
@@ -92,6 +97,15 @@ class ConnectomePolicy(nn.Module):
             self.register_buffer(f"enc_scale_{k}", torch.as_tensor(FEATURE_SCALE, dtype=torch.float32, device=device))
             self.enc_w.append(nn.Parameter((cfg.enc_std * torch.randn(len(neurons), len(feats), generator=gen)).to(device)))
             self.enc_b.append(nn.Parameter(torch.zeros(len(neurons), device=device)))
+        a0, theta0, _ = self.net.neuron_params()
+        with torch.no_grad():
+            for k in range(len(LEGS)):
+                self.enc_b[k].copy_(theta0[getattr(self, f"enc_neurons_{k}"), 0] + cfg.prop_offset)
+
+        # Tônus de repouso dos neurônios motores das patas (corrente constante treinável).
+        motors = torch.as_tensor(np.concatenate([c.groups[f"motor_{leg}"] for leg in LEGS]), dtype=torch.long, device=device)
+        self.register_buffer("motors", motors)
+        self.motor_bias = nn.Parameter((theta0[motors, 0] + cfg.motor_tone).detach().clone())
 
         # Comando de velocidade nos dois DNg100.
         dng100 = np.concatenate([c.groups["DNg100_L"], c.groups["DNg100_R"]])
@@ -134,6 +148,7 @@ class ConnectomePolicy(nn.Module):
             neurons, feats = getattr(self, f"enc_neurons_{k}"), getattr(self, f"enc_features_{k}")
             x = (obs[:, feats] - getattr(self, f"enc_center_{k}")) / getattr(self, f"enc_scale_{k}")
             current = current.index_add(0, neurons, self.enc_w[k] @ x.T + self.enc_b[k][:, None])
+        current = current.index_add(0, self.motors, self.motor_bias[:, None].expand(-1, batch))
         drive = self.log_walk_gain.exp() * v_cmd
         return current.index_add(0, self.dng100, drive[None, :].expand(len(self.dng100), -1))
 
@@ -143,6 +158,16 @@ class ConnectomePolicy(nn.Module):
         contrib = weight[:, None] * r[self.dec_motor]
         out = torch.zeros(6 * N_JOINTS, r.shape[1], device=self.device).index_add(0, self.dec_out, contrib)
         return out.T + self.dec_bias
+
+    @torch.no_grad()
+    def calibrate_rest(self, obs_rest: torch.Tensor, v_cmd: float, seconds: float = 1.0) -> None:
+        """Ajusta o viés do decodificador para a saída ser zero com a mosca parada na postura."""
+        batch = obs_rest.shape[0]
+        r = self.initial_state(batch)
+        v = torch.full((batch,), float(v_cmd), device=self.device)
+        for _ in range(round(seconds / self.cfg.control_dt)):
+            r = self.net(r, self.currents(obs_rest, v), dt=self.cfg.control_dt, substeps=self.cfg.substeps)
+        self.dec_bias -= self.decode(r).mean(dim=0)
 
     def forward(self, r: torch.Tensor, obs: torch.Tensor, v_cmd: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Um passo de controle: devolve o novo estado (N, lote) e a ação média (lote, 42)."""
