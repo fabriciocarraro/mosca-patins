@@ -16,6 +16,11 @@ A cada passo de controle (10 ms):
 Nada de camadas escondidas: entre sentidos e comando, de um lado, e os servos, do outro, só
 a fiação do conectoma. A exploração do PPO soma ruído à ação média, como na MLP.
 
+Dois corpos (`body`): "skate" (42 saídas, os servos das juntas; o tendão longo, ltm, abaixa o
+tarso) e "walk" (M4, a mosca com pés: 42 servos + a adesão das 6 garras, comandada pelo
+tendão longo, que no inseto puxa o tendão da garra). O giro pedido entra nos DNa01 e DNa02
+do lado da curva (no inseto, eles disparam no giro para o próprio lado).
+
 Ponto de partida: na referência de volume de 1,30× a mediana (a que dá o ritmo do DNg100
 sem treino), qualquer entrada sensorial leva a rede inteira a disparar sem controle. Na
 normalização padrão do código de Pugliese (1,0×, a mediana da própria rede), com os
@@ -57,6 +62,8 @@ class ControllerConfig:
     dec_gain: float = 0.002  # ação por Hz de cada neurônio motor, no início (malha fechada estável)
     init_std: float = 0.6  # desvio inicial do ruído de exploração, em unidades de ação
     seed: int = 0
+    body: str = "skate"  # "skate" (42 saídas) ou "walk" (42 + adesão das 6 garras)
+    turn_gain: float = 100.0  # corrente nos DNa01/DNa02 do lado da curva por rad/s pedido
 
 
 def leg_feature_index(leg: int, act_dim: int = 6 * N_JOINTS) -> np.ndarray:
@@ -112,14 +119,34 @@ class ConnectomePolicy(nn.Module):
         self.register_buffer("dng100", torch.as_tensor(dng100, dtype=torch.long, device=device))
         self.log_walk_gain = nn.Parameter(torch.tensor(float(np.log(cfg.walk_gain)), device=device))
 
-        # Decodificador: ligações neurônio motor → junta (índice na ação de 42 posições).
+        # Comando de giro nos DNa01/DNa02 de cada lado (esquerdo para giro positivo, anti-horário).
+        turn_l = np.concatenate([c.groups["DNa01_L"], c.groups["DNa02_L"]])
+        turn_r = np.concatenate([c.groups["DNa01_R"], c.groups["DNa02_R"]])
+        self.register_buffer("turn_l", torch.as_tensor(turn_l, dtype=torch.long, device=device))
+        self.register_buffer("turn_r", torch.as_tensor(turn_r, dtype=torch.long, device=device))
+        self.log_turn_gain = nn.Parameter(torch.tensor(float(np.log(cfg.turn_gain)), device=device))
+
+        # Decodificador: ligações neurônio motor → saída (servos: pata × 7 + junta; adesão: 42 + pata).
+        self.n_out = 6 * N_JOINTS + (6 if cfg.body == "walk" else 0)
         motor, out, sign = [], [], []
         decoders = leg_decoders(c)
         for k, leg in enumerate(LEGS):
             dec = decoders[leg]
-            motor.append(dec.motor)
-            out.append(k * N_JOINTS + dec.joint)
-            sign.append(dec.sign)
+            if cfg.body == "walk":  # tendão longo -> adesão; motores sem músculo também podem usá-la
+                ltm = np.array([str(c.cell_type[i]).startswith("ltm") for i in dec.motor])
+                keep = ~ltm
+                motor.append(dec.motor[keep])
+                out.append(k * N_JOINTS + dec.joint[keep])
+                sign.append(dec.sign[keep])
+                extra = np.unique(np.concatenate([dec.motor[ltm], dec.motor[dec.sign == 0]]))
+                is_ltm = np.array([str(c.cell_type[i]).startswith("ltm") for i in extra], dtype=bool)
+                motor.append(extra)
+                out.append(np.full(len(extra), 6 * N_JOINTS + k))
+                sign.append(np.where(is_ltm, 1, 0).astype(np.int8))
+            else:
+                motor.append(dec.motor)
+                out.append(k * N_JOINTS + dec.joint)
+                sign.append(dec.sign)
         motor, out, sign = (np.concatenate(x) for x in (motor, out, sign))
         self.register_buffer("dec_motor", torch.as_tensor(motor, dtype=torch.long, device=device))
         self.register_buffer("dec_out", torch.as_tensor(out, dtype=torch.long, device=device))
@@ -131,8 +158,8 @@ class ConnectomePolicy(nn.Module):
         # livres eram 330 vezes mais sensíveis que os ganhos e dominavam a divergência KL do PPO.
         init = float(np.log(cfg.dec_gain))
         self.dec_raw = nn.Parameter(torch.where(torch.as_tensor(free), torch.zeros(len(sign)), torch.full((len(sign),), init)).to(device))
-        self.dec_bias = nn.Parameter(torch.zeros(6 * N_JOINTS, device=device))
-        self.log_std = nn.Parameter(torch.full((6 * N_JOINTS,), float(np.log(cfg.init_std)), device=device))
+        self.dec_bias = nn.Parameter(torch.zeros(self.n_out, device=device))
+        self.log_std = nn.Parameter(torch.full((self.n_out,), float(np.log(cfg.init_std)), device=device))
 
     def param_groups(self) -> dict[str, list[nn.Parameter]]:
         """Parâmetros por grupo, para taxas de aprendizado relativas (ver connectome_train.py)."""
@@ -140,7 +167,7 @@ class ConnectomePolicy(nn.Module):
                 "codificador": list(self.enc_w) + list(self.enc_b),
                 "tonus": [self.motor_bias],
                 "decodificador": [self.dec_raw, self.dec_bias],
-                "comando": [self.log_walk_gain],
+                "comando": [self.log_walk_gain, self.log_turn_gain],
                 "exploracao": [self.log_std]}
 
     @property
@@ -160,13 +187,17 @@ class ConnectomePolicy(nn.Module):
             current = current.index_add(0, neurons, self.enc_w[k] @ x.T + self.enc_b[k][:, None])
         current = current.index_add(0, self.motors, self.motor_bias[:, None].expand(-1, batch))
         drive = self.log_walk_gain.exp() * v_cmd
-        return current.index_add(0, self.dng100, drive[None, :].expand(len(self.dng100), -1))
+        current = current.index_add(0, self.dng100, drive[None, :].expand(len(self.dng100), -1))
+        yaw = obs[:, 184]  # giro pedido (rad/s), na observação do ambiente
+        turn = self.log_turn_gain.exp()
+        current = current.index_add(0, self.turn_l, (turn * torch.relu(yaw))[None, :].expand(len(self.turn_l), -1))
+        return current.index_add(0, self.turn_r, (turn * torch.relu(-yaw))[None, :].expand(len(self.turn_r), -1))
 
     def decode(self, r: torch.Tensor) -> torch.Tensor:
-        """Ação média (lote, 42) a partir das taxas (N, lote)."""
+        """Ação média (lote, n_out) a partir das taxas (N, lote)."""
         weight = torch.where(self.dec_free, self.cfg.dec_gain * self.dec_raw, self.dec_sign * self.dec_raw.exp())
         contrib = weight[:, None] * r[self.dec_motor]
-        out = torch.zeros(6 * N_JOINTS, r.shape[1], device=self.device).index_add(0, self.dec_out, contrib)
+        out = torch.zeros(self.n_out, r.shape[1], device=self.device).index_add(0, self.dec_out, contrib)
         return out.T + self.dec_bias
 
     @torch.no_grad()
