@@ -1,0 +1,16 @@
+# Ambiente
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+
+# Dados de terceiros (baixados por script, nunca versionados)
+assets/*
+!assets/README.md
+
+# Saídas de execução
+runs/
+outputs/
+
+# Log de avisos do MuJoCo
+MUJOCO_LOG.TXT

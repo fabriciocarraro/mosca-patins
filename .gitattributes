@@ -1,0 +1,4 @@
+# Fim de linha LF no repositório e nas cópias (Windows e Linux/Spark)
+* text=auto eol=lf
+*.png binary
+*.gif binary
