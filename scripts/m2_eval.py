@@ -1,9 +1,10 @@
 """M2: avalia uma política nos 20 testes fixos e confere os critérios de pronto.
 
 Testes: 20 tentativas com sementes fixas (as mesmas para qualquer política), a partir do
-repouso, sem empurrão, com a ação média da política (sem ruído de exploração) e
-velocidade pedida de 3 cm/s. Critério do M2: ≥80% dos testes com média ≥3 cm/s em 5 s,
-≥25% do tempo deslizando e <10% de quedas.
+repouso, sem empurrão, com a ação média da política (sem ruído de exploração). Critério do
+M2: ≥80% dos testes com média ≥3 cm/s em 5 s (`--min-speed`), ≥25% do tempo deslizando e
+<10% de quedas. A política aprende a manter a velocidade pedida (`--speed`); como a média
+inclui a partida do repouso, pedir exatamente 3 cm/s dá média abaixo de 3.
 
 Uso:
     python scripts/m2_eval.py runs/m2_mlp_a/latest.pt
@@ -71,7 +72,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("checkpoint")
     parser.add_argument("--tests", type=int, default=20)
-    parser.add_argument("--speed", type=float, default=3.0)
+    parser.add_argument("--speed", type=float, default=3.0, help="velocidade pedida (cm/s)")
+    parser.add_argument("--min-speed", type=float, default=3.0, help="média mínima do critério (cm/s)")
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--gif", default="", help="grava um GIF do teste 0 (câmera lenta 4×)")
     parser.add_argument("--sheet", default="", help="grava uma folha de quadros (PNG) do teste 0, um a cada 0,25 s")
@@ -93,10 +95,12 @@ def main() -> None:
     for k, e in enumerate(episodes):
         print(f"  {k:4d}  {e['seconds']:6.2f}  {'sim' if e['fell'] else 'não':>5}  {e['speed']:9.2f}  {e['rolling']:9.2f}"
               f"  {e['glide_frac']:7.2f}  {e['grounded_frac']:14.2f}  {e['cot']:19.1f}")
-    fast = np.mean([not e["fell"] and e["seconds"] >= env.cfg.episode_seconds - 1e-9 and e["speed"] >= args.speed for e in episodes])
+    fast = np.mean([not e["fell"] and e["seconds"] >= env.cfg.episode_seconds - 1e-9 and e["speed"] >= args.min_speed
+                    for e in episodes])
     glide = np.mean([e["glide_frac"] for e in episodes])
     falls = np.mean([e["fell"] for e in episodes])
-    print(f"\nmédia ≥{args.speed:g} cm/s em {env.cfg.episode_seconds:g} s: {fast:.0%} dos testes (critério ≥80%)")
+    print(f"\nvelocidade pedida {args.speed:g} cm/s; média ≥{args.min_speed:g} cm/s em {env.cfg.episode_seconds:g} s: "
+          f"{fast:.0%} dos testes (critério ≥80%)")
     print(f"tempo deslizando: {glide:.0%} (critério ≥25%); rolamento médio {np.mean([e['rolling'] for e in episodes]):.2f}")
     print(f"quedas: {falls:.0%} (critério <10%)")
     print("M2:", "OK" if fast >= 0.8 and glide >= 0.25 and falls < 0.1 else "ainda não")
