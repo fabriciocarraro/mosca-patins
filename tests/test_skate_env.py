@@ -57,3 +57,12 @@ def test_falling_ends_the_attempt(env):
     assert terminated[0] and not env.alive[0]
     assert env.episode_stats()[0]["fell"]
     assert not terminated[1:].any()
+
+
+def test_skate_velocity_is_measured_along_the_skate(env):
+    # Mosca empurrada a 1 cm/s para a frente: os patins, que apontam para a frente, andam ~1 cm/s
+    # ao longo do próprio eixo e quase nada de lado (priv = altura, ao longo ×6, de lado ×6, ...).
+    _, priv = env.reset(np.arange(4), np.full(4, 1.0), push=np.full(4, 1.0))
+    along, side = priv[:, 1:7], priv[:, 7:13]
+    assert (along > 0.8).all() and (along < 1.05).all()
+    assert (np.abs(side) < 0.5).all()

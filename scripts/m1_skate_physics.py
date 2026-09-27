@@ -76,7 +76,8 @@ def loaded_lateral_slip(model: mujoco.MjModel, data: mujoco.MjData, weight: floa
     for leg in LEGS:
         if data.sensor(f"touch_skate_{leg}").data[0] < MIN_LOAD * weight:
             continue
-        mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_BODY, model.body(f"skate_{leg}").id, vel, 1)
+        # XBODY = referencial do patim; mjOBJ_BODY usaria o de inércia, com os eixos reordenados.
+        mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_XBODY, model.body(f"skate_{leg}").id, vel, 1)
         worst = max(worst, abs(vel[4]))
     return worst
 

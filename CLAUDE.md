@@ -37,9 +37,12 @@ cada etapa está no README.
 
 ## Achados que orientam os próximos passos
 
-- Marchas programadas fixas só conseguem "andar de pato" (patins plantados, rolamento ≤ 0,11),
-  mesmo com servos 3× mais fortes. O deslize precisa de realimentação: é o teste do M2
-  (MLP treinada por reforço, com bônus de rolamento como no humanoide de patins da ETH).
+- Velocidade de patim: `mj_objectVelocity` com `mjOBJ_XBODY` (referencial do patim). Com
+  `mjOBJ_BODY` o MuJoCo usa o referencial de inércia, com os eixos reordenados; esse erro
+  fez o M1 concluir que as marchas programadas "andavam de pato" (na verdade deslizam,
+  rolamento 0,99) e estragou o bônus de rolamento das execuções A a E.
+- A MLP da execução E desliza 98% do tempo com movimentos pequenos das patas (juntas
+  oscilando 1–6°, 5–8 Hz); o resultado não muda com passo de física menor.
 - As patas giram pouco o patim (±15° na frente, 5–15° só para fora no meio e atrás).
   Alavancas se o deslize não surgir: ângulo de montagem com a ponta para fora, comprimento
   do patim, atrito de rolamento.

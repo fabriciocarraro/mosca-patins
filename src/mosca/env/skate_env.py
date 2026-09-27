@@ -228,7 +228,10 @@ class SkateVecEnv:
         side = np.zeros(len(LEGS))
         yaw_sin = np.zeros(len(LEGS))
         for k, body in enumerate(self.skates):
-            mujoco.mj_objectVelocity(m, d, mujoco.mjtObj.mjOBJ_BODY, body, self._vel, 1)
+            # XBODY: referencial do próprio patim (x ao longo dele). Com mjOBJ_BODY o MuJoCo usa o
+            # referencial de inércia, cujos eixos saem reordenados (no patim, o x de inércia é o "para
+            # cima"); as execuções A a E mediram assim o rolamento e o deslize, errado.
+            mujoco.mj_objectVelocity(m, d, mujoco.mjtObj.mjOBJ_XBODY, body, self._vel, 1)
             along[k], side[k] = self._vel[3], self._vel[4]
             x = d.xmat[body].reshape(3, 3)[:, 0]
             yaw_sin[k] = x @ lateral

@@ -102,7 +102,8 @@ def simulate(gait: Gait, seconds: float, frames_every: int = 0, renderer=None) -
         body_speed = np.linalg.norm(data.subtree_linvel[thorax][:2])
         for sensor, body in skates:
             if data.sensordata[model.sensor_adr[sensor]] > MIN_LOAD * weight:
-                mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_BODY, body, vel, 1)
+                # XBODY = referencial do patim (x ao longo dele); mjOBJ_BODY seria o de inércia.
+                mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_XBODY, body, vel, 1)
                 rolled += min(abs(vel[3]), 1.2 * body_speed)
                 moved += body_speed
         if renderer is not None and k % frames_every == 0:
