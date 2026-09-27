@@ -62,3 +62,7 @@ cada etapa está no README.
   substituto na rede; `torch.clamp` zera o gradiente no limite (use passagem direta). Antes
   de mudar hiperparâmetros do PPO, meça a sensibilidade da ação a cada grupo de parâmetros:
   pesos sem escala num grupo dominam a divergência KL e travam a taxa dos outros.
+- Professora do M4 (política de caminhada do flybody): as 59 ações vêm na ordem da política
+  (adesão, cabeça, abdômen, patas), diferente da ordem dos atuadores do modelo; o remapeamento
+  está em `mosca.walking.teacher.ACTION_ORDER`. Sem ele, a mosca cai na hora. Os sensores da
+  observação são a média dos 10 subpassos de cada passo de controle (2 ms), como no flybody.

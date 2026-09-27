@@ -7,6 +7,7 @@ Uso:
     python scripts/download_assets.py --malecns-weights  # + ligações do MaleCNS (1,1 GB)
     python scripts/download_assets.py --malecns-stats    # + sinapses por neurônio do MaleCNS (baixa 778 MB, guarda 2 MB)
     python scripts/download_assets.py --pugliese         # + rede do MaleCNS usada por Pugliese et al. (75 MB)
+    python scripts/download_assets.py --walking-policy   # + política de caminhada do flybody (5 MB)
 
 Os arquivos do flybody são conferidos pelo hash de blob do Git informado pela API do GitHub,
 então rodar de novo só baixa o que faltar ou estiver corrompido. A amostra de caminhada é
@@ -24,7 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from mosca.paths import FLYBODY_DATA_DIR, FLYBODY_DIR, MALECNS_DIR, PUGLIESE_DIR, WALKING_SAMPLE  # noqa: E402
+from mosca.paths import ASSETS, FLYBODY_DATA_DIR, FLYBODY_DIR, MALECNS_DIR, PUGLIESE_DIR, WALKING_SAMPLE  # noqa: E402
 
 FLYBODY_REPO = "TuragaLab/flybody"
 FLYBODY_COMMIT = "d015e9bfe441bd90ae431bac24c55cb74bdbce26"  # main em 2025-07-30
@@ -54,6 +55,9 @@ PUGLIESE_FILES = ("W_20260210_vncRoisOnly.csv", "wTable_20260210_vncRoisOnly.csv
 # O host ndownloader.figshare.com redireciona para o S3, que aceita HTTP Range.
 WALKING_ZIP_URL = "https://ndownloader.figshare.com/files/51196868"
 WALKING_SAMPLE_MEMBER = "walking-dataset-small_female-only_snippets-100_min-len-0.5s_trk-files-0-9.hdf5"
+# Políticas treinadas do flybody (mesmo figshare, GPL-3.0+): só a de caminhada, a professora do M4.
+POLICIES_ZIP_URL = "https://ndownloader.figshare.com/files/44815195"
+POLICIES_DIR = ASSETS / "flybody_policies"
 
 
 def _get(url: str) -> bytes:
@@ -119,6 +123,28 @@ def download_walking_sample(dest: Path = WALKING_SAMPLE) -> None:
     }
     (FLYBODY_DATA_DIR / "SOURCE.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     print(f"amostra de caminhada: {info.file_size / 1e6:.1f} MB -> {dest}")
+
+
+def download_walking_policy(dest: Path = POLICIES_DIR) -> None:
+    """Extrai walking/ (SavedModel) do zip de políticas do figshare, lendo só os trechos necessários."""
+    from remotezip import RemoteZip
+
+    manifest_path = dest / "SOURCE.json"
+    if manifest_path.exists() and (dest / "walking" / "variables" / "variables.index").exists():
+        print("política de caminhada já presente")
+        return
+    files = {}
+    with RemoteZip(POLICIES_ZIP_URL) as z:
+        for info in z.infolist():
+            if info.filename.startswith("walking/") and not info.is_dir():
+                out = dest / info.filename
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_bytes(z.read(info))
+                files[info.filename] = {"size": info.file_size, "crc32": f"{info.CRC:08x}"}
+    manifest = {"source": "https://doi.org/10.25378/janelia.25309105", "zip_url": POLICIES_ZIP_URL,
+                "license": "GPL-3.0+", "files": files}
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    print(f"política de caminhada: {len(files)} arquivos -> {dest / 'walking'}")
 
 
 def download_malecns(names: tuple[str, ...], dest: Path = MALECNS_DIR) -> None:
@@ -192,6 +218,7 @@ def main() -> None:
     parser.add_argument("--malecns-stats", action="store_true",
                         help="sinapses por neurônio do MaleCNS (baixa 778 MB, guarda ~2 MB)")
     parser.add_argument("--pugliese", action="store_true", help="rede do MaleCNS de Pugliese et al. (~75 MB)")
+    parser.add_argument("--walking-policy", action="store_true", help="política de caminhada do flybody (~5 MB)")
     args = parser.parse_args()
     if args.pugliese:
         download_pugliese()
@@ -202,6 +229,8 @@ def main() -> None:
         download_malecns(MALECNS_SMALL + ((MALECNS_WEIGHTS,) if args.malecns_weights else ()))
     if args.malecns_stats:
         download_malecns_stats()
+    if args.walking_policy:
+        download_walking_policy()
 
 
 if __name__ == "__main__":
