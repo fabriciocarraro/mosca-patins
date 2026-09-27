@@ -138,6 +138,9 @@ class SkateVecEnv:
         self.pool = ThreadPoolExecutor(max_workers=cfg.n_threads)
         self._vel = np.zeros(6)
 
+        # Gancho opcional chamado a cada subpasso de física (só com n_envs = 1, para renderizar a
+        # re-simulação em câmera lenta); os subpassos um a um dão o mesmo resultado bit a bit.
+        self.substep_callback = None
         self.v_cmd = np.zeros(self.n)
         self.yaw_cmd = np.zeros(self.n)
         self.ema_v = np.zeros(self.n)
@@ -187,7 +190,15 @@ class SkateVecEnv:
             d.ctrl[self.leg_act] = ctrl[i]
             mujoco.mj_step(self.model, d, nstep=self.substeps)
 
-        list(self.pool.map(physics, alive))
+        if self.substep_callback is not None:
+            assert self.n == 1, "o gancho de subpasso é só para re-simulação com um ambiente"
+            d = self.datas[0]
+            d.ctrl[self.leg_act] = ctrl[0]
+            for sub in range(self.substeps):
+                mujoco.mj_step(self.model, d)
+                self.substep_callback(self, sub)
+        else:
+            list(self.pool.map(physics, alive))
 
         obs, priv = np.zeros((self.n, self.obs_dim)), np.zeros((self.n, self.priv_dim))
         reward = np.zeros(self.n)

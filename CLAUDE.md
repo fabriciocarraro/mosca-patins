@@ -54,3 +54,11 @@ cada etapa está no README.
   sinapses do cordão nervoso (as do cérebro entre descendentes e ascendentes fazem a rede
   disparar), o volume vem da tabela deles ou da estimativa pelas sinapses, e a referência do
   volume é 1,30× a mediana do nosso grafo (com a mediana própria, silêncio; com 1,40×, disparo).
+  O ritmo é de ~10 Hz, mas balanço e apoio da coxa ficam só ~0,2 de ciclo defasados (também
+  na rede deles): no vídeo, falar em ritmo, não em alternância de passada.
+- Controlador de conectoma: com a referência 1,30×, qualquer entrada sensorial faz a rede
+  disparar; o controle usa 1,0×, proprioceptores 2 abaixo do limiar e tônus nos motores
+  (sem o tônus a rede fica calada com a mosca parada e o PPO não aprende). Gradiente
+  substituto na rede; `torch.clamp` zera o gradiente no limite (use passagem direta). Antes
+  de mudar hiperparâmetros do PPO, meça a sensibilidade da ação a cada grupo de parâmetros:
+  pesos sem escala num grupo dominam a divergência KL e travam a taxa dos outros.

@@ -87,21 +87,26 @@ class Recorder:
                                 self.actions[: self.t], self.every, np.array(self.qpos), np.array(self.qvel))
 
 
-def replay(cap: IterationCapture, index: int, env_cfg: EnvConfig, on_step=None) -> dict:
+def replay(cap: IterationCapture, index: int, env_cfg: EnvConfig, on_step=None, on_substep=None) -> dict:
     """Re-simula a tentativa `index` da leva num ambiente de lote 1 e confere os estados gravados.
 
-    `on_step(env, t)` é chamado depois de cada passo (para renderizar, por exemplo).
-    Devolve as estatísticas da tentativa e o maior desvio encontrado nos estados gravados.
+    `on_step(env, t)` é chamado depois de cada passo de controle e `on_substep(env, t, sub)`
+    depois de cada subpasso de física (para renderizar em câmera lenta). Devolve as
+    estatísticas da tentativa e o maior desvio encontrado nos estados gravados.
     """
     cfg = EnvConfig(**{**env_cfg.__dict__, "n_envs": 1, "n_threads": 1})
     env = SkateVecEnv(cfg)
     env.reset(cap.attempts[index : index + 1], cap.v_cmd[index : index + 1], cap.push[index : index + 1])
+    step = {"t": 0}
+    if on_substep is not None:
+        env.substep_callback = lambda e, sub: on_substep(e, step["t"], sub)
     d = env.datas[0]
     worst = 0.0
     for t in range(int(cap.steps[index])):
         if t % cap.checkpoint_every == 0:
             k = t // cap.checkpoint_every
             worst = max(worst, float(np.abs(d.qpos - cap.qpos[k, index]).max()), float(np.abs(d.qvel - cap.qvel[k, index]).max()))
+        step["t"] = t
         env.step(cap.actions[t, index][None])
         if on_step is not None:
             on_step(env, t)

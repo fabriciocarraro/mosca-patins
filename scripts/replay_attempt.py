@@ -6,7 +6,10 @@ gravados a cada 0,5 s (desvio máximo 0 = bit a bit).
 
 Uso:
     python scripts/replay_attempt.py --run conectoma_a --attempt 1234
-    python scripts/replay_attempt.py --run conectoma_a --attempt 1234 --gif outputs/tentativa_1235.gif --slow 4
+    python scripts/replay_attempt.py --run conectoma_a --attempt 1234 --gif outputs/tentativa_1235.gif --slow 20
+
+A câmera lenta é de verdade: a física é refeita subpasso a subpasso (0,2 ms), igual bit a bit
+à coleta, e um quadro é renderizado a cada 1/(fps × câmera lenta) de tempo simulado.
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ def main() -> None:
     parser.add_argument("--attempt", type=int, required=True, help="número da tentativa, a partir de 0")
     parser.add_argument("--gif", default="")
     parser.add_argument("--slow", type=float, default=4.0, help="câmera lenta do GIF")
+    parser.add_argument("--fps", type=float, default=25.0, help="quadros por segundo do GIF")
     args = parser.parse_args()
 
     run_dir = RUNS / args.run
@@ -50,29 +54,32 @@ def main() -> None:
 
         state = {}
 
-        def render(env, t):
+        def render(env, t, sub):
             if "renderer" not in state:
                 state["renderer"] = mujoco.Renderer(env.model, height=360, width=640)
                 cam = mujoco.MjvCamera()
                 cam.type, cam.trackbodyid = mujoco.mjtCamera.mjCAMERA_TRACKING, env.thorax
                 cam.distance, cam.elevation, cam.azimuth = 0.75, -18, 150
                 state["cam"] = cam
-            every = max(1, round(1.0 / (25 * env.cfg.control_dt * args.slow)))  # GIF a 25 quadros/s
-            if t % every:
+                dt = env.model.opt.timestep
+                state["every"] = max(1, round(1.0 / (args.fps * args.slow) / dt))  # subpassos por quadro
+            k = t * env.substeps + sub + 1  # subpassos desde o começo
+            if k % state["every"]:
                 return
             state["renderer"].update_scene(env.datas[0], camera=state["cam"])
             img = Image.fromarray(state["renderer"].render())
-            ImageDraw.Draw(img).text((10, 8), f"Tentativa #{args.attempt + 1}  t = {(t + 1) * env.cfg.control_dt:.2f} s  "
+            ImageDraw.Draw(img).text((10, 8), f"Tentativa #{args.attempt + 1}  t = {k * env.model.opt.timestep:.3f} s  "
                                               f"(câmera lenta {args.slow:g}x)  {args.run}", fill=(20, 20, 20))
             frames.append(img.quantize(colors=128))
 
-    res = replay(cap, index, env_cfg, on_step=render)
+    res = replay(cap, index, env_cfg, on_substep=render)
     print(f"tentativa #{args.attempt + 1} (iteração {it}, ambiente {index}): {res['seconds']:.2f} s, "
           f"{'caiu' if res['fell'] else 'não caiu'}, {res['speed']:.2f} cm/s, deslizando {res['glide_frac']:.0%}; "
           f"desvio máximo nos estados gravados: {res['max_deviation']:.3g}")
     if args.gif and frames:
         Path(args.gif).parent.mkdir(parents=True, exist_ok=True)
-        frames[0].save(args.gif, save_all=True, append_images=frames[1:], duration=40, loop=0, optimize=True)
+        frames[0].save(args.gif, save_all=True, append_images=frames[1:], duration=round(1000 / args.fps), loop=0,
+                       optimize=True)
         print(f"GIF: {args.gif} ({len(frames)} quadros)")
     if not np.isfinite(res["max_deviation"]) or res["max_deviation"] > 0:
         sys.exit("a re-simulação divergiu dos estados gravados")
