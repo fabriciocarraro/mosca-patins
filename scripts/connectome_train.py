@@ -190,6 +190,7 @@ def main() -> None:
         r = pol.initial_state(n)
         noise = torch.randn((n, A), generator=gen).to(device)
         steps = 0
+        activity = []  # (fração de neurônios ativos, taxa média dos motores) a cada 50 passos
         with torch.no_grad():
             for t in range(T):
                 alive = env.alive.copy()
@@ -199,6 +200,9 @@ def main() -> None:
                     states[t // chunk] = r
                 o, on, pn = to_dev(obs, device), to_dev(norm_obs(obs), device), to_dev(norm_priv(priv), device)
                 r, mean = pol(r, o, vc)
+                if t % 50 == 0:
+                    live = torch.as_tensor(alive, device=device)
+                    activity.append(((r[:, live] > 0.01).float().mean().item(), r[pol.motors][:, live].mean().item()))
                 if t > 0:  # ruído correlacionado, variância 1 mantida
                     noise = beta * noise + np.sqrt(1 - beta**2) * torch.randn((n, A), generator=gen).to(device)
                 std = log_std.exp()
@@ -253,7 +257,9 @@ def main() -> None:
                    "speed": mean_of("speed"), "rolling": mean_of("rolling"), "glide_frac": mean_of("glide_frac"),
                    "grounded_frac": mean_of("grounded_frac"), "success": success, "lr": state["lr"],
                    "std": float(pol.log_std.detach().exp().mean()), "walk_gain": pol.log_walk_gain.exp().item(),
-                   "time_collect": t_collect, "time_update": t_update, **stats}
+                   "time_collect": t_collect, "time_update": t_update,
+                   "active_frac": float(np.mean([a for a, _ in activity])), "motor_rate": float(np.mean([m for _, m in activity])),
+                   **stats}
         if args.eval_every and (it + 1) % args.eval_every == 0:
             eval_speed = min(args.eval_speed, state["v_max"])
             ev = evaluate(env, pol, eval_speed)
