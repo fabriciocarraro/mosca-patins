@@ -127,7 +127,7 @@ def main() -> None:
              "obs_dim": env.obs_dim, "priv_dim": env.priv_dim, "act_dim": env.act_dim}, indent=2), encoding="utf-8")
 
     n, horizon = env.n, env.max_steps
-    print("  it   passos  retorno  dur(s) queda%  vel   rol  desliza v_max sucesso    lr      kl   s/it")
+    print("  it   passos  retorno  dur(s) queda%  vel   rol  desliza v_max sucesso    lr  kl_fim ép  s/it")
     for it in range(state["it"], args.iters):
         t0 = time.perf_counter()
         attempts = np.arange(it * n, (it + 1) * n)
@@ -222,8 +222,8 @@ def main() -> None:
                 f.write(json.dumps({"it": it, **e}) + "\n")
         print(f"{it:4d} {state['total_steps']:8d} {metrics['return']:8.1f} {metrics['seconds']:6.2f} "
               f"{100 * metrics['fell']:5.1f} {metrics['speed']:5.2f} {metrics['rolling']:5.2f} "
-              f"{metrics['glide_frac']:6.2f} {v_max:5.1f} {success:6.2f} {state['lr']:.1e} {stats['kl']:.4f} "
-              f"{metrics['time']:5.1f}", flush=True)
+              f"{metrics['glide_frac']:6.2f} {v_max:5.1f} {success:6.2f} {state['lr']:.1e} {stats['kl_final']:.4f} "
+              f"{stats['epochs']:2d} {metrics['time']:5.1f}", flush=True)
 
         save(latest, ac, opt, norm_obs, norm_priv, state, env_cfg, args)
         if (it + 1) % args.save_every == 0:

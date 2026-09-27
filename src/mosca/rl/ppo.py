@@ -3,8 +3,13 @@
 Cada iteração recomeça todos os ambientes, roda até todos caírem ou chegarem ao fim do
 tempo e só então atualiza a política: cada tentativa inteira sai de uma única versão da
 política, requisito da captura fiel. O crítico é assimétrico (vê também o estado
-privilegiado do simulador). A taxa de aprendizado se ajusta para manter a divergência KL
-entre a política antiga e a nova perto de um alvo.
+privilegiado do simulador).
+
+Controle do tamanho do passo: a taxa de aprendizado fica fixa dentro da iteração; as
+épocas param antes se a divergência KL entre a política da coleta e a atual passa de
+`kl_stop` × alvo; e a taxa se ajusta uma vez por iteração pela divergência final. (Ajustar
+a cada minilote, com ~35 minilotes por iteração, fazia a taxa subir até o teto, estourar a
+divergência e despencar ao mínimo dentro de cada iteração.)
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ class PPOConfig:
     lr_min: float = 1e-5
     lr_max: float = 1e-3
     target_kl: float = 0.01
+    kl_stop: float = 2.0  # para as épocas quando a divergência passa de kl_stop × alvo
     ent_coef: float = 0.0
     vf_coef: float = 1.0
     max_grad_norm: float = 1.0
@@ -118,6 +124,9 @@ def ppo_update(ac: ActorCritic, opt: torch.optim.Optimizer, batch: dict, cfg: PP
     n = obs.shape[0]
     stats = {"policy_loss": [], "value_loss": [], "entropy": [], "kl": [], "clip_frac": []}
     old_std = old_log_std.exp()
+    for group in opt.param_groups:
+        group["lr"] = lr
+    kl, epochs_done, stopped = 0.0, 0, False
     for _ in range(cfg.epochs):
         perm = torch.randperm(n, generator=generator)
         for start in range(0, n, cfg.minibatch):
@@ -137,17 +146,23 @@ def ppo_update(ac: ActorCritic, opt: torch.optim.Optimizer, batch: dict, cfg: PP
             opt.step()
             with torch.no_grad():
                 new_std = ac.log_std.exp()
-                kl = (torch.log(new_std / old_std) + (old_std**2 + (old_mean[idx] - dist.mean) ** 2)
+                kl = (torch.log(new_std / old_std) + (old_std**2 + (old_mean[idx] - ac.actor(obs[idx])) ** 2)
                       / (2 * new_std**2) - 0.5).sum(-1).mean().item()
-                if kl > 2 * cfg.target_kl:
-                    lr = max(cfg.lr_min, lr / 1.5)
-                elif 0 < kl < cfg.target_kl / 2:
-                    lr = min(cfg.lr_max, lr * 1.5)
-                for group in opt.param_groups:
-                    group["lr"] = lr
             stats["policy_loss"].append(policy_loss.item())
             stats["value_loss"].append(value_loss.item())
             stats["entropy"].append(entropy.item())
             stats["kl"].append(kl)
             stats["clip_frac"].append(((ratio - 1).abs() > cfg.clip).float().mean().item())
-    return lr, {k: float(np.mean(v)) for k, v in stats.items()}
+            if kl > cfg.kl_stop * cfg.target_kl:
+                stopped = True
+                break
+        epochs_done += 1
+        if stopped:
+            break
+    if stopped or kl > 2 * cfg.target_kl:
+        lr = max(cfg.lr_min, lr / 1.5)
+    elif kl < cfg.target_kl / 2:
+        lr = min(cfg.lr_max, lr * 1.5)
+    out = {k: float(np.mean(v)) for k, v in stats.items()}
+    out.update(kl_final=kl, epochs=epochs_done)
+    return lr, out

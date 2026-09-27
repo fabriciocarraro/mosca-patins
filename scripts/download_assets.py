@@ -5,6 +5,7 @@ Uso:
     python scripts/download_assets.py --walking-sample   # + 100 trechos de moscas reais andando
     python scripts/download_assets.py --malecns          # + anotações e neurotransmissores do MaleCNS
     python scripts/download_assets.py --malecns-weights  # + ligações do MaleCNS (1,1 GB)
+    python scripts/download_assets.py --pugliese         # + rede do MaleCNS usada por Pugliese et al. (75 MB)
 
 Os arquivos do flybody são conferidos pelo hash de blob do Git informado pela API do GitHub,
 então rodar de novo só baixa o que faltar ou estiver corrompido. A amostra de caminhada é
@@ -22,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from mosca.paths import FLYBODY_DATA_DIR, FLYBODY_DIR, MALECNS_DIR, WALKING_SAMPLE  # noqa: E402
+from mosca.paths import FLYBODY_DATA_DIR, FLYBODY_DIR, MALECNS_DIR, PUGLIESE_DIR, WALKING_SAMPLE  # noqa: E402
 
 FLYBODY_REPO = "TuragaLab/flybody"
 FLYBODY_COMMIT = "d015e9bfe441bd90ae431bac24c55cb74bdbce26"  # main em 2025-07-30
@@ -36,6 +37,13 @@ MALECNS_SMALL = (
     "body-neurotransmitters-male-cns-v1.0.feather",
 )
 MALECNS_WEIGHTS = "connectome-weights-male-cns-v1.0-minconf-0.5.feather"
+
+# Rede do MaleCNS que Pugliese et al. usaram (neurônios motores da pata da frente, pré-motores e
+# descendentes; sinapses só nas regiões do cordão nervoso), no repositório deles.
+PUGLIESE_REPO = "smpuglie/Pugliese_2026"
+PUGLIESE_COMMIT = "10e7661bf414ba7b4c2edf795cd36d0f878c17c0"  # main em 2026-09-15
+PUGLIESE_DIR_IN_REPO = "data/imac t1 connectome data"
+PUGLIESE_FILES = ("W_20260210_vncRoisOnly.csv", "wTable_20260210_vncRoisOnly.csv")
 
 # Figshare da Janelia (DOI 10.25378/janelia.25309105, licença GPL-3.0+).
 # O host ndownloader.figshare.com redireciona para o S3, que aceita HTTP Range.
@@ -131,12 +139,38 @@ def download_malecns(names: tuple[str, ...], dest: Path = MALECNS_DIR) -> None:
         print(f"MaleCNS: {name} ({path.stat().st_size / 1e6:.1f} MB)")
 
 
+def download_pugliese(dest: Path = PUGLIESE_DIR) -> None:
+    """Rede do MaleCNS de Pugliese et al., conferida pelo hash de blob do Git."""
+    from urllib.parse import quote
+
+    folder = quote(PUGLIESE_DIR_IN_REPO)
+    api = f"https://api.github.com/repos/{PUGLIESE_REPO}/contents/{folder}?ref={PUGLIESE_COMMIT}"
+    listing = {item["name"]: item for item in json.loads(_get(api)) if item["name"] in PUGLIESE_FILES}
+    dest.mkdir(parents=True, exist_ok=True)
+    for name in PUGLIESE_FILES:
+        item, path = listing[name], dest / name
+        if path.exists() and _git_blob_sha(path.read_bytes()) == item["sha"]:
+            print(f"Pugliese: {name} já presente")
+            continue
+        data = _get(f"https://raw.githubusercontent.com/{PUGLIESE_REPO}/{PUGLIESE_COMMIT}/{folder}/{quote(name)}")
+        if _git_blob_sha(data) != item["sha"]:
+            raise RuntimeError(f"hash não confere: {name}")
+        path.write_bytes(data)
+        print(f"Pugliese: {name} ({len(data) / 1e6:.1f} MB)")
+    manifest = {"repo": PUGLIESE_REPO, "commit": PUGLIESE_COMMIT, "path": PUGLIESE_DIR_IN_REPO,
+                "files": {n: {"size": listing[n]["size"], "git_sha": listing[n]["sha"]} for n in PUGLIESE_FILES}}
+    (dest / "SOURCE.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--walking-sample", action="store_true", help="baixa os 100 trechos de caminhada (~95 MB)")
     parser.add_argument("--malecns", action="store_true", help="anotações e neurotransmissores do MaleCNS (~55 MB)")
     parser.add_argument("--malecns-weights", action="store_true", help="ligações do MaleCNS (~1,1 GB)")
+    parser.add_argument("--pugliese", action="store_true", help="rede do MaleCNS de Pugliese et al. (~75 MB)")
     args = parser.parse_args()
+    if args.pugliese:
+        download_pugliese()
     download_flybody()
     if args.walking_sample:
         download_walking_sample()
