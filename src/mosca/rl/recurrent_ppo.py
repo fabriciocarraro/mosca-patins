@@ -6,7 +6,10 @@ recomeça do estado gravado e o gradiente atravessa o trecho (retropropagação 
 tempo). O crítico é uma MLP sem memória que vê a observação e o estado privilegiado.
 
 O passo é controlado como em ppo.py: taxa fixa dentro da iteração, épocas interrompidas se
-a divergência KL passa de `kl_stop` × alvo, e ajuste da taxa uma vez por iteração.
+a divergência KL passa de `kl_stop` × alvo, e ajuste da taxa uma vez por iteração. Aqui o
+ajuste vale só para o ator: o crítico tem taxa própria (grupo "critic" do otimizador) e o
+corte de gradiente é separado, para o gradiente grande do crítico no começo não encolher o
+do ator.
 """
 
 from __future__ import annotations
@@ -84,8 +87,11 @@ def recurrent_ppo_update(policy: nn.Module, critic: Critic, opt: torch.optim.Opt
     offsets = torch.arange(cfg.chunk, device=ro.valid.device)
     old_std = ro.log_std.exp()
     for group in opt.param_groups:
-        group["lr"] = lr
-    stats = {"policy_loss": [], "value_loss": [], "kl": [], "clip_frac": []}
+        if group.get("name") != "critic":
+            group["lr"] = lr
+    actor_params = list(policy.parameters())
+    critic_params = list(critic.parameters())
+    stats = {"policy_loss": [], "value_loss": [], "kl": [], "clip_frac": [], "grad_actor": []}
     kl, epochs_done, stopped = 0.0, 0, False
     for _ in range(cfg.epochs):
         perm = torch.randperm(len(ks), generator=generator).to(ks.device)
@@ -115,7 +121,8 @@ def recurrent_ppo_update(policy: nn.Module, critic: Critic, opt: torch.optim.Opt
             loss = policy_loss + cfg.vf_coef * value_loss
             opt.zero_grad()
             loss.backward()
-            nn.utils.clip_grad_norm_(list(policy.parameters()) + list(critic.parameters()), cfg.max_grad_norm)
+            stats["grad_actor"].append(float(nn.utils.clip_grad_norm_(actor_params, cfg.max_grad_norm)))
+            nn.utils.clip_grad_norm_(critic_params, cfg.max_grad_norm)
             opt.step()
             with torch.no_grad():  # KL da coleta até os parâmetros de antes deste passo
                 new_std = policy.log_std.exp()
