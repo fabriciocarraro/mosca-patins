@@ -91,6 +91,9 @@ def parse_args() -> argparse.Namespace:
                    help="peso de uma penalidade por afastar os parâmetros do ator dos de partida (o conectoma que anda)")
     p.add_argument("--anchor-iters", type=int, default=50, help="iterações até a âncora sumir (cai linearmente)")
     p.add_argument("--target-kl", type=float, default=0.02)
+    p.add_argument("--kl-smoothing", type=float, default=1.0,
+                   help="média móvel da KL dos minilotes para parar a época e ajustar a taxa (1 = sem média; "
+                        "0.2 ≈ últimos 5 minilotes)")
     p.add_argument("--critic-lr", type=float, default=3e-4, help="taxa fixa do crítico (a do ator se ajusta pela KL)")
     p.add_argument("--enc-lr-mult", type=float, default=10.0, help="multiplicador da taxa do codificador")
     p.add_argument("--epochs", type=int, default=3)
@@ -197,7 +200,7 @@ def main() -> None:
                                 deterministic=args.deterministic)
     ppo_cfg = RecurrentPPOConfig(target_kl=args.target_kl, epochs=args.epochs, chunk=args.chunk, lr=args.lr,
                                  gamma=args.gamma, lam=args.lam, lr_min=args.lr_min,
-                                 minibatch_chunks=args.minibatch_chunks)
+                                 minibatch_chunks=args.minibatch_chunks, kl_smoothing=args.kl_smoothing)
     env = SkateVecEnv(env_cfg)
     graph = Connectome.load(Path(args.graph))
     pol = ConnectomePolicy(graph, ctrl_cfg, device=device)

@@ -39,6 +39,10 @@ class RecurrentPPOConfig:
     lr_max: float = 1e-3
     target_kl: float = 0.02
     kl_stop: float = 2.0
+    # Média móvel da KL dos minilotes usada para parar a época e ajustar a taxa (1 = sem média). A KL
+    # de um minilote de 16 trechos salta: no PPO de patins, picos de 0,1–0,2 com média de 0,002–0,009
+    # paravam a época cedo e derrubavam a taxa sem a política ter mudado de fato.
+    kl_smoothing: float = 1.0
     vf_coef: float = 1.0
     max_grad_norm: float = 1.0
     reward_scale: float = 0.1
@@ -97,7 +101,8 @@ def recurrent_ppo_update(policy: nn.Module, critic: Critic, opt: torch.optim.Opt
     actor_params = list(policy.parameters())
     critic_params = list(critic.parameters())
     stats = {"policy_loss": [], "value_loss": [], "kl": [], "clip_frac": [], "grad_actor": []}
-    kl, epochs_done, stopped = 0.0, 0, False
+    kl, kl_raw, epochs_done, stopped = 0.0, 0.0, 0, False
+    smoothing_started = False
     for _ in range(cfg.epochs):
         perm = torch.randperm(len(ks), generator=generator).to(ks.device)
         for start in range(0, len(ks), cfg.minibatch_chunks):
@@ -145,10 +150,12 @@ def recurrent_ppo_update(policy: nn.Module, critic: Critic, opt: torch.optim.Opt
                 new_std = policy.log_std.exp()
                 old_mean = ro.mean[t_c, b[None, :]]
                 per = (torch.log(new_std / old_std) + (old_std**2 + (old_mean - mean) ** 2) / (2 * new_std**2) - 0.5).sum(-1)
-                kl = ((per * mask).sum() / count).item()
+                kl_raw = ((per * mask).sum() / count).item()
+            kl = kl_raw if not smoothing_started or cfg.kl_smoothing >= 1.0 else kl + cfg.kl_smoothing * (kl_raw - kl)
+            smoothing_started = True
             stats["policy_loss"].append(policy_loss.item())
             stats["value_loss"].append(value_loss.item())
-            stats["kl"].append(kl)
+            stats["kl"].append(kl_raw)
             stats["clip_frac"].append(((((ratio - 1).abs() > cfg.clip) & mask).sum() / count).item())
             if kl > cfg.kl_stop * cfg.target_kl:
                 stopped = True
@@ -161,5 +168,5 @@ def recurrent_ppo_update(policy: nn.Module, critic: Critic, opt: torch.optim.Opt
     elif kl < cfg.target_kl / 2:
         lr = min(cfg.lr_max, lr * 1.5)
     out = {k: float(np.mean(v)) if v else 0.0 for k, v in stats.items()}
-    out.update(kl_final=kl, epochs=epochs_done)
+    out.update(kl_final=kl, kl_last=kl_raw, epochs=epochs_done, minibatches=len(stats["kl"]))
     return lr, out
