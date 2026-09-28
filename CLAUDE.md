@@ -83,3 +83,10 @@ cada etapa está no README.
   trás); com o erro filtrado e a referência que acompanha a mosca (`--ref-leak-tau 0.2`), ele
   melhora. Avalie sempre pelo teste sem professora (% que chega aos 5 s e velocidade), não
   pelo erro.
+- Conectoma que anda (τ×0,25, ganho por ligação, `--filtered-loss --ref-leak-tau 0.2`): segue a
+  velocidade pedida, mas gira em círculos (não sente rotação) e ignorava o giro pedido porque os
+  DNa01/DNa02 (neurônios grandes, limiar 90–200) paravam de disparar quando o ganho de giro caía no
+  treino: use `--turn-gain 1500 --cmd-lr-mult 0`. Meça com `m4_eval.py` (velocímetro e giroscópio),
+  não pela distância em linha reta do teste do treino, que pune quem anda em círculos. O embaralhado
+  anda tão bem quanto o real e os ganhos mudam pouco (|log ganho| médio ~0,05): com neurônios
+  rápidos, a rede funciona como um reservatório com entrada e saída treinadas.
