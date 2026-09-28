@@ -70,3 +70,16 @@ cada etapa está no README.
   coleta conduzida pela professora e meça o teto linear (regressão das ações dela) a partir
   de cada camada: sentidos crus, proprioceptores, pré-motores, motores. No M4, a informação
   chegava aos pré-motores e sumia nos motores; parâmetros por tipo celular não resolveram.
+- Latência decide o M4: a política do flybody só anda reagindo em menos de 10 ms (com as
+  ações atrasadas 10 ms, ou filtradas com τ de 20 ms, todas as moscas caem em menos de 1 s).
+  O comando dela é liga-desliga: 73% da variância é um chacoalhar que o filtro dos atuadores
+  (τ 10 ms) apaga. O conectoma com τ de 20 ms responde aos sentidos das patas em 20–40 ms e só
+  aprendeu a ficar em pé (anda_c: 100% sem cair, velocidade 0,02). Com τ×0,25 (5 ms), a
+  imitação offline chega a 0,27 de erro filtrado, contra 0,72 (`m4_bc_probe.py`). A MLP
+  destilada com 20 ms de atraso e 20 ms de filtro cai em 0,1 s; a professora lenta
+  (`m4_slow_teacher.py`) parte da MLP sem latência e sobe a latência aos poucos no PPO.
+- DAgger com a MLP: com o erro cru e a referência fixa, o aluno piora quando β cai (o erro é
+  dominado pelo chacoalhar, e a professora manda "correr para alcançar" quando ele fica para
+  trás); com o erro filtrado e a referência que acompanha a mosca (`--ref-leak-tau 0.2`), ele
+  melhora. Avalie sempre pelo teste sem professora (% que chega aos 5 s e velocidade), não
+  pelo erro.
