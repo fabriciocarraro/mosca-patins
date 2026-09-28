@@ -34,7 +34,7 @@ O viés do decodificador é calibrado para que a saída de repouso seja a postur
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 import torch
@@ -66,6 +66,7 @@ class ControllerConfig:
     motor_synapse_gains: bool = False  # degrau 2 da escada, só nas ligações que entram nos motores das patas
     all_synapse_gains: bool = False  # degrau 2 completo: ganho positivo por ligação em toda a rede (sinal fixo)
     turn_gain: float = 100.0  # corrente nos DNa01/DNa02 do lado da curva por rad/s pedido
+    tau_scale: float = 1.0  # multiplica as constantes de tempo sorteadas (τ ~20 ms no modelo de Pugliese)
 
 
 def leg_feature_index(leg: int, act_dim: int = 6 * N_JOINTS) -> np.ndarray:
@@ -90,6 +91,8 @@ class ConnectomePolicy(nn.Module):
         rng = np.random.default_rng(cfg.seed)
         sizes, _, _ = estimate_sizes(c.body_id)
         params = sample_params(sizes, rng, reference=cfg.size_ref * np.nanmedian(sizes))
+        if cfg.tau_scale != 1.0:
+            params = replace(params, tau=params.tau * cfg.tau_scale)
         leg_motors = np.concatenate([c.groups[f"motor_{leg}"] for leg in LEGS])
         self.net = PuglieseNet(signed_matrix(c), params, cell_type=c.cell_type, device=device, surrogate=True,
                                gain_rows=leg_motors if cfg.motor_synapse_gains else None,

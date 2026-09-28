@@ -186,17 +186,24 @@ class TeacherObservation:
         return np.concatenate([parts[k] for k in sorted(parts)])
 
 
-def straight_trajectory(n_steps: int, speed: float, yaw_speed: float = 0.0, init_pos=(0.0, 0.0, 0.1278),
+REF_HEIGHT = 0.1278  # altura do tórax nas referências do flybody (cm)
+
+
+def straight_trajectory(n_steps: int, speed: float, yaw_speed: float = 0.0, init_pos=(0.0, 0.0, REF_HEIGHT),
                         heading: float = 0.0, dt: float = CONTROL_DT) -> np.ndarray:
     """Trajetória de referência (passos, 7) a velocidade constante, reta ou em curva (yaw_speed em rad/s),
     na mesma forma da `constant_speed_trajectory` do flybody."""
     qpos = np.zeros((n_steps, 7))
     yaw = heading + yaw_speed * dt * np.arange(n_steps)
-    step = speed * dt
-    qpos[0, :3] = init_pos
-    for k in range(1, n_steps):
-        qpos[k, :2] = qpos[k - 1, :2] + step * np.array([np.cos(yaw[k - 1]), np.sin(yaw[k - 1])])
+    qpos[:, :2] = init_pos[:2]
+    qpos[1:, :2] += np.cumsum(speed * dt * np.stack([np.cos(yaw[:-1]), np.sin(yaw[:-1])], axis=1), axis=0)
     qpos[:, 2] = init_pos[2]
     qpos[:, 3] = np.cos(yaw / 2)
     qpos[:, 6] = np.sin(yaw / 2)
     return qpos
+
+
+def heading_of(quat: np.ndarray) -> float:
+    """Rumo (rad) de um quatérnio (w, x, y, z): o ângulo do eixo x do corpo projetado no chão."""
+    w, x, y, z = quat
+    return float(np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))

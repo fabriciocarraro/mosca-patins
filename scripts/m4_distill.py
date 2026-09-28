@@ -11,7 +11,14 @@ sentidos das próprias patas. A cada iteração:
 2. O aluno treina por retropropagação em trechos de `--chunk` passos, sorteados das últimas
    `--buffer-iters` iterações: cada trecho recomeça do estado da rede gravado na coleta, com
    `--burn-in` passos sem gradiente para atualizar o estado, e o erro quadrático normalizado
-   (por saída) nos passos restantes.
+   (por saída) nos passos restantes. Com `--filtered-loss`, o erro é o das ações depois do
+   filtro dos atuadores (τ de 10 ms): a professora comanda em liga-desliga, e 73% da variância
+   dos seus comandos é um chacoalhar que os atuadores apagam e que neurônios lentos não seguem.
+
+`--ref-leak-tau` faz a referência da professora acompanhar a mosca (ver WalkingVecEnv): sem
+isso, um aluno que fica para trás recebe da professora ordens de "correr para alcançar", que
+dependem de um atraso que ele não tem como saber. `--student mlp` troca o conectoma por uma
+MLP com as mesmas entradas (controle: separa os problemas da receita dos da fiação).
 
 Critério do M4 (docs/plano.md): ≥90% de caminhadas de 5 s bem-sucedidas a 1–3 cm/s, e o
 DNa02 faz virar.
@@ -38,6 +45,7 @@ from mosca.brain.graph import Connectome  # noqa: E402
 from mosca.capture import library_versions  # noqa: E402
 from mosca.env.skate_env import attempt_seed  # noqa: E402
 from mosca.paths import MALECNS_DIR, RUNS  # noqa: E402
+from mosca.walking.student import MLPStudent, MLPStudentConfig  # noqa: E402
 from mosca.walking.teacher import FUTURE_STEPS, WalkingTeacher, straight_trajectory  # noqa: E402
 from mosca.walking.vec_env import WalkingVecEnv  # noqa: E402
 
@@ -100,17 +108,35 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--all-synapse-gains", action="store_true",
                    help="degrau 2 completo: ganho treinável por ligação em toda a rede (sinal fixo)")
     p.add_argument("--syn-lr-mult", type=float, default=10.0)
+    p.add_argument("--filtered-loss", action="store_true",
+                   help="erro das ações depois do filtro dos atuadores (o que chega às juntas)")
+    p.add_argument("--ref-leak-tau", type=float, default=0.0,
+                   help="constante de tempo (s) com que a referência da professora é puxada para a mosca; 0 = fixa")
+    p.add_argument("--student", choices=("conectoma", "mlp"), default="conectoma")
+    p.add_argument("--mlp-hidden", type=int, default=256)
+    p.add_argument("--mlp-layers", type=int, default=2)
+    p.add_argument("--student-lag-ms", type=float, default=0.0, help="MLP: atraso das entradas")
+    p.add_argument("--student-tau-ms", type=float, default=0.0, help="MLP: filtro na saída (neurônios lentos)")
     p.add_argument("--eval-every", type=int, default=5)
     p.add_argument("--eval-seconds", type=float, default=5.0)
     p.add_argument("--resume", action="store_true")
     cc = ControllerConfig()
-    for name in ("size_ref", "walk_gain", "turn_gain", "enc_std", "prop_offset", "motor_tone", "dec_gain"):
+    for name in ("size_ref", "walk_gain", "turn_gain", "enc_std", "prop_offset", "motor_tone", "dec_gain", "tau_scale"):
         p.add_argument(f"--{name.replace('_', '-')}", type=float, default=getattr(cc, name))
     return p.parse_args()
 
 
 def to_dev(x, device, dtype=torch.float32):
     return torch.as_tensor(np.asarray(x), dtype=dtype, device=device)
+
+
+def actuator_filter(x: np.ndarray, alpha: np.ndarray) -> np.ndarray:
+    """Comandos (passos, lote, saídas) depois do filtro dos atuadores, a partir do primeiro."""
+    f = np.empty_like(x)
+    f[0] = x[0]
+    for t in range(1, len(x)):
+        f[t] = f[t - 1] + alpha * (x[t] - f[t - 1])
+    return f
 
 
 def rollout(env, pol, teacher, refs, v_cmd, yaw, driver_teacher, chunk, device, mix=0.0, rng=None):
@@ -159,28 +185,37 @@ def main() -> None:
     run_dir = RUNS / args.run
     (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
 
-    env = WalkingVecEnv(args.envs, n_threads=args.threads)
+    env = WalkingVecEnv(args.envs, n_threads=args.threads, ref_leak_tau=args.ref_leak_tau)
     teacher = WalkingTeacher().to(device)
-    graph = Connectome.load(Path(args.graph))
-    cfg = ControllerConfig(body="walk", control_dt=0.002, substeps=1, size_ref=args.size_ref, walk_gain=args.walk_gain,
-                           turn_gain=args.turn_gain, enc_std=args.enc_std, prop_offset=args.prop_offset,
-                           motor_tone=args.motor_tone, dec_gain=args.dec_gain, seed=args.seed,
-                           motor_synapse_gains=args.motor_synapse_gains, all_synapse_gains=args.all_synapse_gains)
-    pol = ConnectomePolicy(graph, cfg, device=device)
+    if args.student == "mlp":
+        graph = None
+        cfg = MLPStudentConfig(hidden=args.mlp_hidden, layers=args.mlp_layers, lag_steps=round(args.student_lag_ms / 2),
+                               tau=args.student_tau_ms / 1000, seed=args.seed)
+        pol = MLPStudent(cfg, device=device)
+    else:
+        graph = Connectome.load(Path(args.graph))
+        cfg = ControllerConfig(body="walk", control_dt=0.002, substeps=1, size_ref=args.size_ref, walk_gain=args.walk_gain,
+                               turn_gain=args.turn_gain, enc_std=args.enc_std, prop_offset=args.prop_offset,
+                               motor_tone=args.motor_tone, dec_gain=args.dec_gain, seed=args.seed, tau_scale=args.tau_scale,
+                               motor_synapse_gains=args.motor_synapse_gains, all_synapse_gains=args.all_synapse_gains)
+        pol = ConnectomePolicy(graph, cfg, device=device)
     mults = {"rede": 1.0, "codificador": 10.0, "tonus": 3.0, "decodificador": args.dec_lr_mult, "comando": 10.0,
-             "exploracao": 0.0, "sinapses": args.syn_lr_mult}
+             "exploracao": 0.0, "sinapses": args.syn_lr_mult, "mlp": 1.0}
+    alpha_np = env.act_alpha.astype(np.float32)
+    alpha = to_dev(alpha_np, device)
     opt = torch.optim.Adam([{"params": ps, "lr": args.lr * mults[name], "name": name}
                             for name, ps in pol.param_groups().items()])
     state = {"it": 0}
-    tgt_std = None
+    tgt_std = tgt_std_f = None
     latest = run_dir / "latest.pt"
     if args.init_from and not (args.resume and latest.exists()):
         src = torch.load(args.init_from, weights_only=False, map_location=device)
         own = pol.state_dict()
-        copied = {k: v for k, v in src["policy"].items() if k in own and own[k].shape == v.shape}
+        fixed = {"net.tau0", "net.a0", "net.theta0", "net.r_max"}  # sorteados a partir da configuração
+        copied = {k: v for k, v in src["policy"].items() if k in own and own[k].shape == v.shape and k not in fixed}
         own.update(copied)
         pol.load_state_dict(own)
-        tgt_std = src.get("tgt_std")
+        tgt_std, tgt_std_f = src.get("tgt_std"), src.get("tgt_std_f")
         if "net.log_gain" in src["policy"] and pol.net.edge_gains:  # ganhos dos motores -> mesmas ligações
             old = PuglieseNetKeys.edge_ids_for_rows(pol, graph)
             with torch.no_grad():
@@ -190,18 +225,19 @@ def main() -> None:
         ckpt = torch.load(latest, weights_only=False, map_location=device)
         pol.load_state_dict(ckpt["policy"])
         opt.load_state_dict(ckpt["opt"])
-        state, tgt_std = ckpt["state"], ckpt["tgt_std"]
+        state, tgt_std, tgt_std_f = ckpt["state"], ckpt["tgt_std"], ckpt.get("tgt_std_f")
         print(f"retomando da iteração {state['it']}")
     else:
         (run_dir / "config.json").write_text(json.dumps(
-            {"args": vars(args), "controller": asdict(cfg), "neurons": graph.n,
+            {"args": vars(args), "controller": asdict(cfg), "neurons": graph.n if graph else 0,
              "trainable": sum(p.numel() for p in pol.parameters()), "versions": library_versions()}, indent=2),
             encoding="utf-8")
 
     buffer: list[dict] = []
     ref_steps = round(args.episode_seconds / 0.002) + FUTURE_STEPS + 1
-    print(f"conectoma (corpo walk): {graph.n:,} neurônios, {sum(p.numel() for p in pol.parameters()):,} parâmetros; {device}")
-    print("  it   beta  erro_norm (início→fim)  quedas(aluno)  vel_aluno/pedida  coleta  treino")
+    name = f"conectoma (corpo walk): {graph.n:,} neurônios" if graph else f"MLP {cfg.layers}×{cfg.hidden}"
+    print(f"{name}, {sum(p.numel() for p in pol.parameters()):,} parâmetros; {device}")
+    print("  it   beta  erro_norm (início→fim)  filtrado  quedas(aluno)  vel_aluno/pedida  coleta  treino")
     for it in range(state["it"], args.iters):
         t0 = time.perf_counter()
         rng = np.random.default_rng(attempt_seed(args.seed, it))
@@ -220,46 +256,55 @@ def main() -> None:
             tgt_std = np.maximum(ro["tgt"][ro["valid"]].std(axis=0), 0.05).astype(np.float32)
             with torch.no_grad():  # o viés do decodificador começa na média dos alvos
                 pol.dec_bias.copy_(to_dev(ro["tgt"][ro["valid"]].mean(axis=0), device))
-        std_t = to_dev(tgt_std, device)
+        if tgt_std_f is None:
+            filt = actuator_filter(ro["tgt"], alpha_np)
+            tgt_std_f = np.maximum(filt[ro["valid"]].std(axis=0), 0.05).astype(np.float32)
+        std_t, std_f = to_dev(tgt_std, device), to_dev(tgt_std_f, device)
 
         # Treino: trechos sorteados do buffer.
         t1 = time.perf_counter()
-        losses = []
+        losses, losses_f = [], []
         segs = [(b, k, i) for b, r_ in enumerate(buffer) for k in range(r_["states"].shape[0]) for i in range(n)
                 if k * args.chunk < len(r_["valid"]) and r_["valid"][k * args.chunk, i]]
         for u in range(args.updates):
             pick = [segs[j] for j in rng.choice(len(segs), size=min(args.minibatch_chunks, len(segs)), replace=False)]
             r = torch.stack([buffer[b]["states"][k][:, i] for b, k, i in pick], dim=1)
-            loss_sum, count = 0.0, 0.0
+            loss_sum, loss_f_sum, count = 0.0, 0.0, 0.0
+            out_f = tgt_f = None  # comandos do aluno e da professora depois do filtro dos atuadores
             for t in range(args.chunk):
                 obs_t = np.stack([buffer[b]["obs"][min(k * args.chunk + t, len(buffer[b]["obs"]) - 1), i] for b, k, i in pick])
                 v_t = to_dev([buffer[b]["v_cmd"][i] for b, k, i in pick], device)
+                tgt_t = to_dev(np.stack([buffer[b]["tgt"][min(k * args.chunk + t, len(buffer[b]["tgt"]) - 1), i]
+                                         for b, k, i in pick]), device)
+                with torch.set_grad_enabled(t >= args.burn_in):
+                    r, out = pol(r, to_dev(obs_t, device), v_t)
+                    out_f = out if out_f is None else out_f + alpha * (out - out_f)
+                tgt_f = tgt_t if tgt_f is None else tgt_f + alpha * (tgt_t - tgt_f)
                 if t < args.burn_in:
-                    with torch.no_grad():
-                        r, _ = pol(r, to_dev(obs_t, device), v_t)
                     continue
-                r, out = pol(r, to_dev(obs_t, device), v_t)
-                tgt_t = np.stack([buffer[b]["tgt"][min(k * args.chunk + t, len(buffer[b]["tgt"]) - 1), i] for b, k, i in pick])
                 mask = np.array([k * args.chunk + t < len(buffer[b]["valid"]) and buffer[b]["valid"][k * args.chunk + t, i]
                                  for b, k, i in pick], dtype=np.float32)
-                err = ((out - to_dev(tgt_t, device)) / std_t).pow(2).mean(dim=1)
                 m_t = to_dev(mask, device)
-                loss_sum = loss_sum + (err * m_t).sum()
+                loss_sum = loss_sum + (((out - tgt_t) / std_t).pow(2).mean(dim=1) * m_t).sum()
+                loss_f_sum = loss_f_sum + (((out_f - tgt_f) / std_f).pow(2).mean(dim=1) * m_t).sum()
                 count += mask.sum()
-            loss = loss_sum / max(count, 1.0)
+            loss, loss_f = loss_sum / max(count, 1.0), loss_f_sum / max(count, 1.0)
             opt.zero_grad()
-            loss.backward()
+            (loss_f if args.filtered_loss else loss).backward()
             torch.nn.utils.clip_grad_norm_(pol.parameters(), 1.0)
             opt.step()
             losses.append(loss.item())
+            losses_f.append(loss_f.item())
         t_train = time.perf_counter() - t1
 
         student = ~driver_teacher
         speed = ro["dist"] / np.maximum(ro["t"] * 0.002, 1e-6)
         ratio = float(np.mean(speed[student] / v_cmd[student])) if student.any() else float("nan")
         falls = float(np.mean(ro["fell"][student])) if student.any() else float("nan")
-        metrics = {"it": it, "beta": beta, "mix": mix, "loss": float(np.mean(losses)), "loss_first": float(np.mean(losses[:5])),
-                   "loss_last": float(np.mean(losses[-5:])), "student_falls": falls,
+        main_losses = losses_f if args.filtered_loss else losses
+        metrics = {"it": it, "beta": beta, "mix": mix, "loss": float(np.mean(losses)), "loss_filt": float(np.mean(losses_f)),
+                   "loss_first": float(np.mean(main_losses[:5])), "loss_last": float(np.mean(main_losses[-5:])),
+                   "student_falls": falls,
                    "student_speed_ratio": ratio, "time_collect": t_collect, "time_train": t_train}
         if args.eval_every and (it + 1) % args.eval_every == 0:
             cmds = [TEST_COMMANDS[j % len(TEST_COMMANDS)] for j in range(n)]
@@ -275,10 +320,10 @@ def main() -> None:
         with open(run_dir / "metrics.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(metrics) + "\n")
         print(f"{it:4d} {beta:6.2f} {metrics['loss']:10.3f} ({metrics['loss_first']:.2f}→{metrics['loss_last']:.2f}) "
-              f"{falls:14.2f} {ratio:17.2f} {t_collect:7.1f} {t_train:7.1f}", flush=True)
+              f"{metrics['loss_filt']:9.3f} {falls:14.2f} {ratio:17.2f} {t_collect:7.1f} {t_train:7.1f}", flush=True)
         state["it"] = it + 1
         ckpt = {"policy": pol.state_dict(), "opt": opt.state_dict(), "state": state, "tgt_std": tgt_std,
-                "controller": asdict(cfg), "args": vars(args)}
+                "tgt_std_f": tgt_std_f, "controller": asdict(cfg), "args": vars(args)}
         torch.save(ckpt, latest.with_suffix(".tmp"))
         latest.with_suffix(".tmp").replace(latest)
         if (it + 1) % 10 == 0:
