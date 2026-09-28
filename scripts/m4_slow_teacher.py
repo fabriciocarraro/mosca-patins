@@ -59,7 +59,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--tau-ms", type=float, default=None, help="padrão: o do checkpoint de partida")
     p.add_argument("--init-std", type=float, default=0.3)
     p.add_argument("--noise-tau", type=float, default=0.02, help="s; ruído de exploração correlacionado")
-    p.add_argument("--action-clip", type=float, default=4.0)
+    p.add_argument("--action-clip", type=float, default=20.0, help="os alvos da professora do flybody vão a ~±10 (os atuadores cortam no próprio limite)")
     p.add_argument("--gamma", type=float, default=0.998)
     p.add_argument("--lam", type=float, default=0.95)
     p.add_argument("--target-kl", type=float, default=0.01)
