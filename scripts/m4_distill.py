@@ -74,6 +74,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--max-gpu-mem-gb", type=float, default=8.0)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--graph", default=str(MALECNS_DIR / "controller_graph_min5.npz"),
+                   help="grafo do controlador (o embaralhado, para o controle do M7)")
     p.add_argument("--episode-seconds", type=float, default=2.0)
     p.add_argument("--v-min", type=float, default=0.5)
     p.add_argument("--v-max", type=float, default=3.0)
@@ -159,7 +161,7 @@ def main() -> None:
 
     env = WalkingVecEnv(args.envs, n_threads=args.threads)
     teacher = WalkingTeacher().to(device)
-    graph = Connectome.load(MALECNS_DIR / "controller_graph_min5.npz")
+    graph = Connectome.load(Path(args.graph))
     cfg = ControllerConfig(body="walk", control_dt=0.002, substeps=1, size_ref=args.size_ref, walk_gain=args.walk_gain,
                            turn_gain=args.turn_gain, enc_std=args.enc_std, prop_offset=args.prop_offset,
                            motor_tone=args.motor_tone, dec_gain=args.dec_gain, seed=args.seed,
