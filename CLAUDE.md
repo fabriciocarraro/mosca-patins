@@ -90,3 +90,10 @@ cada etapa está no README.
   não pela distância em linha reta do teste do treino, que pune quem anda em círculos. O embaralhado
   anda tão bem quanto o real e os ganhos mudam pouco (|log ganho| médio ~0,05): com neurônios
   rápidos, a rede funciona como um reservatório com entrada e saída treinadas.
+- Marcha simétrica: o conectoma que anda desviava conforme a velocidade (1 cm/s à direita, 3 cm/s à
+  esquerda). Halteres (`--haltere-input`) sozinhos não bastaram; com `--mirror` (metade dos trechos
+  espelhados, patas trocadas em ângulo absoluto: nas direitas, os eixos são o espelho dos das
+  esquerdas, conferido pelas garras) e taxa 3× menor, 97% das retas contam. O DAgger piora depois
+  de ~20 iterações (erro sobe, aluno cai): use `--ema`, pegue o best.pt e rode `m4_eval.py`.
+- Treinos no Spark já travaram em `torch.save` (dois ao mesmo tempo, esperando num futex, com o
+  latest.tmp pela metade): o monitor precisa acusar checkpoint parado, e `--resume` retoma.
