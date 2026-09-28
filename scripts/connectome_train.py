@@ -70,6 +70,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--action-scale", type=float, default=0.15)
     p.add_argument("--action-clip", type=float, default=3.0)
     p.add_argument("--noise-tau", type=float, default=0.05)
+    p.add_argument("--control-dt", type=float, default=0.01, help="passo de controle (s); a caminhada do M4 usa 0.002")
+    p.add_argument("--gamma", type=float, default=0.99, help="desconto por passo de controle (0,998 a 2 ms ≈ 0,99 a 10 ms)")
+    p.add_argument("--lam", type=float, default=0.95)
+    p.add_argument("--lr-min", type=float, default=1e-5)
+    p.add_argument("--critic-warmup", type=int, default=0,
+                   help="iterações só do crítico, com a política parada (plano: o crítico aquece primeiro)")
+    p.add_argument("--anchor", type=float, default=0.0,
+                   help="peso de uma penalidade por afastar os parâmetros do ator dos de partida (o conectoma que anda)")
+    p.add_argument("--anchor-iters", type=int, default=50, help="iterações até a âncora sumir (cai linearmente)")
     p.add_argument("--target-kl", type=float, default=0.02)
     p.add_argument("--critic-lr", type=float, default=3e-4, help="taxa fixa do crítico (a do ator se ajusta pela KL)")
     p.add_argument("--enc-lr-mult", type=float, default=10.0, help="multiplicador da taxa do codificador")
@@ -160,7 +169,7 @@ def main() -> None:
     (run_dir / "capture").mkdir(exist_ok=True)
 
     reward_cfg = RewardConfig(**{name: getattr(args, name) for name in REWARD_FLAGS})
-    env_cfg = EnvConfig(n_envs=args.envs, n_threads=args.threads, episode_seconds=args.episode_seconds,
+    env_cfg = EnvConfig(n_envs=args.envs, n_threads=args.threads, episode_seconds=args.episode_seconds, control_dt=args.control_dt,
                         action_scale=args.action_scale, action_clip=args.action_clip, seed=args.seed, reward=reward_cfg)
     ctrl_cfg = ControllerConfig(size_ref=args.size_ref, walk_gain=args.walk_gain, turn_gain=args.turn_gain,
                                 enc_std=args.enc_std, prop_offset=args.prop_offset, motor_tone=args.motor_tone,
@@ -170,6 +179,7 @@ def main() -> None:
                                 haltere_scale=args.haltere_scale, haltere_offset=args.haltere_offset,
                                 turn_cells=tuple(args.turn_cells.split(",")), net_dtype=args.net_dtype)
     ppo_cfg = RecurrentPPOConfig(target_kl=args.target_kl, epochs=args.epochs, chunk=args.chunk, lr=args.lr,
+                                 gamma=args.gamma, lam=args.lam, lr_min=args.lr_min,
                                  minibatch_chunks=args.minibatch_chunks)
     env = SkateVecEnv(env_cfg)
     graph = Connectome.load(Path(args.graph))
@@ -218,6 +228,9 @@ def main() -> None:
                     "env_cfg": asdict(env_cfg), "controller": asdict(ctrl_cfg), "args": vars(args)}, tmp)
         tmp.replace(path)
 
+    # Âncora: os parâmetros do ator na partida (o conectoma que anda), fora a exploração.
+    anchor_ref = [(p, p.detach().clone()) for name, ps in pol.param_groups().items() if name != "exploracao"
+                  for p in ps] if args.anchor > 0 else None
     n, horizon, chunk = env.n, env.max_steps, ppo_cfg.chunk
     print(f"conectoma: {graph.n:,} neurônios, {sum(p.numel() for p in pol.parameters()):,} parâmetros treináveis; "
           f"dispositivo {device}")
@@ -299,7 +312,22 @@ def main() -> None:
         norm_obs.update(np.concatenate(raw_obs))
         norm_priv.update(np.concatenate(raw_priv))
         t1 = time.perf_counter()
-        state["lr"], stats = recurrent_ppo_update(pol, critic, opt, ro, ppo_cfg, state["lr"], gen)
+        warmup = it < args.critic_warmup
+        actor_groups = [g for g in opt.param_groups if g.get("name") not in ("critic",)]
+        if warmup:  # só o crítico aprende: a política continua a de partida
+            saved = [g["mult"] for g in actor_groups]
+            for g in actor_groups:
+                g["mult"] = 0.0
+        weight = args.anchor * max(0.0, 1.0 - it / max(args.anchor_iters, 1))
+        anchor_loss = None
+        if weight > 0 and anchor_ref is not None:
+            def anchor_loss():
+                return weight * sum(((p - p0) ** 2).mean() for p, p0 in anchor_ref)
+        state["lr"], stats = recurrent_ppo_update(pol, critic, opt, ro, ppo_cfg, state["lr"], gen, extra_loss=anchor_loss)
+        if warmup:
+            for g, m in zip(actor_groups, saved):
+                g["mult"] = m
+            state["lr"] = ppo_cfg.lr
         t_update = time.perf_counter() - t1
         del ro, buf, states
 

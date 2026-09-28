@@ -81,7 +81,10 @@ def chunks_with_data(valid: torch.Tensor, chunk: int) -> tuple[torch.Tensor, tor
 
 
 def recurrent_ppo_update(policy: nn.Module, critic: Critic, opt: torch.optim.Optimizer, ro: Rollout,
-                         cfg: RecurrentPPOConfig, lr: float, generator: torch.Generator) -> tuple[float, dict]:
+                         cfg: RecurrentPPOConfig, lr: float, generator: torch.Generator,
+                         extra_loss=None) -> tuple[float, dict]:
+    """`extra_loss`: função sem argumentos somada à perda de cada minilote (por exemplo, uma âncora nos
+    parâmetros de partida)."""
     steps = ro.valid.shape[0]
     valid_adv = ro.adv[ro.valid]
     adv_all = (ro.adv - valid_adv.mean()) / (valid_adv.std() + 1e-8)
@@ -121,6 +124,8 @@ def recurrent_ppo_update(policy: nn.Module, critic: Critic, opt: torch.optim.Opt
             value = critic(ro.obs_norm[t_c, b[None, :]], ro.priv_norm[t_c, b[None, :]])
             value_loss = ((value - ro.ret[t_c, b[None, :]]).pow(2) * mask).sum() / count
             loss = policy_loss + cfg.vf_coef * value_loss
+            if extra_loss is not None:
+                loss = loss + extra_loss()
             opt.zero_grad()
             loss.backward()
             stats["grad_actor"].append(float(nn.utils.clip_grad_norm_(actor_params, cfg.max_grad_norm)))
