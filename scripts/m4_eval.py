@@ -3,7 +3,8 @@
 Critério: ≥90% de caminhadas de 5 s bem-sucedidas a 1–3 cm/s, e o DNa02 faz virar. Cada
 tentativa parte da mosca parada, sem professora e sem ruído. Bem-sucedida = não cai e a
 velocidade média para a frente (velocímetro do tórax, de 0,5 s a 5 s) fica a menos de
-max(0,5 cm/s, 25%) da pedida (a mesma tolerância do M2).
+max(0,5 cm/s, 25%) da pedida (a mesma tolerância do M2) e, sem giro pedido, o giro médio fica
+abaixo de 0,5 rad/s (andar em círculos não conta como reta).
 
 Testes:
 - reta: 1, 2 e 3 cm/s, rumo inicial sorteado;
@@ -103,7 +104,7 @@ def main() -> None:
 
     v = np.array([(1.0, 2.0, 3.0)[k % 3] for k in range(n)])
     res = run(env, pol, v, np.zeros(n), heads, args.seconds, device)
-    ok = res["completed"] & (np.abs(res["speed"] - v) < np.maximum(0.5, 0.25 * v))
+    ok = res["completed"] & (np.abs(res["speed"] - v) < np.maximum(0.5, 0.25 * v)) & (np.abs(res["yaw_rate"]) < 0.5)
     straight = {}
     for speed in (1.0, 2.0, 3.0):
         sel = v == speed
