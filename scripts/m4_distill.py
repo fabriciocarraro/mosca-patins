@@ -63,6 +63,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--minibatch-chunks", type=int, default=16)
     p.add_argument("--updates", type=int, default=60, help="passos do otimizador por iteração")
     p.add_argument("--lr", type=float, default=1e-3)
+    p.add_argument("--dec-lr-mult", type=float, default=10.0,
+                   help="multiplicador da taxa do decodificador (os alvos têm médias de várias unidades)")
     p.add_argument("--buffer-iters", type=int, default=4)
     p.add_argument("--eval-every", type=int, default=5)
     p.add_argument("--eval-seconds", type=float, default=5.0)
@@ -129,7 +131,8 @@ def main() -> None:
                            turn_gain=args.turn_gain, enc_std=args.enc_std, prop_offset=args.prop_offset,
                            motor_tone=args.motor_tone, dec_gain=args.dec_gain, seed=args.seed)
     pol = ConnectomePolicy(graph, cfg, device=device)
-    mults = {"rede": 1.0, "codificador": 10.0, "tonus": 3.0, "decodificador": 1.0, "comando": 10.0, "exploracao": 0.0}
+    mults = {"rede": 1.0, "codificador": 10.0, "tonus": 3.0, "decodificador": args.dec_lr_mult, "comando": 10.0,
+             "exploracao": 0.0}
     opt = torch.optim.Adam([{"params": ps, "lr": args.lr * mults[name], "name": name}
                             for name, ps in pol.param_groups().items()])
     state = {"it": 0}
@@ -150,7 +153,7 @@ def main() -> None:
     buffer: list[dict] = []
     ref_steps = round(args.episode_seconds / 0.002) + FUTURE_STEPS + 1
     print(f"conectoma (corpo walk): {graph.n:,} neurônios, {sum(p.numel() for p in pol.parameters()):,} parâmetros; {device}")
-    print("  it   beta  erro_norm  quedas(aluno)  vel_aluno/pedida  coleta  treino")
+    print("  it   beta  erro_norm (início→fim)  quedas(aluno)  vel_aluno/pedida  coleta  treino")
     for it in range(state["it"], args.iters):
         t0 = time.perf_counter()
         rng = np.random.default_rng(attempt_seed(args.seed, it))
@@ -166,6 +169,8 @@ def main() -> None:
         buffer = (buffer + [ro])[-args.buffer_iters :]
         if tgt_std is None:  # escala de cada saída, fixada na primeira coleta (só a professora)
             tgt_std = np.maximum(ro["tgt"][ro["valid"]].std(axis=0), 0.05).astype(np.float32)
+            with torch.no_grad():  # o viés do decodificador começa na média dos alvos
+                pol.dec_bias.copy_(to_dev(ro["tgt"][ro["valid"]].mean(axis=0), device))
         std_t = to_dev(tgt_std, device)
 
         # Treino: trechos sorteados do buffer.
@@ -204,7 +209,8 @@ def main() -> None:
         speed = ro["dist"] / np.maximum(ro["t"] * 0.002, 1e-6)
         ratio = float(np.mean(speed[student] / v_cmd[student])) if student.any() else float("nan")
         falls = float(np.mean(ro["fell"][student])) if student.any() else float("nan")
-        metrics = {"it": it, "beta": beta, "loss": float(np.mean(losses)), "student_falls": falls,
+        metrics = {"it": it, "beta": beta, "loss": float(np.mean(losses)), "loss_first": float(np.mean(losses[:5])),
+                   "loss_last": float(np.mean(losses[-5:])), "student_falls": falls,
                    "student_speed_ratio": ratio, "time_collect": t_collect, "time_train": t_train}
         if args.eval_every and (it + 1) % args.eval_every == 0:
             cmds = [TEST_COMMANDS[j % len(TEST_COMMANDS)] for j in range(n)]
@@ -219,8 +225,8 @@ def main() -> None:
                   f"velocidade/pedida {metrics['eval_speed_ratio']:.2f}", flush=True)
         with open(run_dir / "metrics.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(metrics) + "\n")
-        print(f"{it:4d} {beta:6.2f} {metrics['loss']:10.3f} {falls:14.2f} {ratio:17.2f} {t_collect:7.1f} {t_train:7.1f}",
-              flush=True)
+        print(f"{it:4d} {beta:6.2f} {metrics['loss']:10.3f} ({metrics['loss_first']:.2f}→{metrics['loss_last']:.2f}) "
+              f"{falls:14.2f} {ratio:17.2f} {t_collect:7.1f} {t_train:7.1f}", flush=True)
         state["it"] = it + 1
         ckpt = {"policy": pol.state_dict(), "opt": opt.state_dict(), "state": state, "tgt_std": tgt_std,
                 "controller": asdict(cfg), "args": vars(args)}
