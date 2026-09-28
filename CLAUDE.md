@@ -102,3 +102,12 @@ cada etapa está no README.
   passou do alvo já na primeira época em toda iteração e a taxa caiu ao piso: o grupo "sinapses"
   (1 milhão de ganhos, cada um andando ~lr por passo no Adam) precisa de multiplicador bem menor;
   meça a sensibilidade por grupo antes do treino final.
+- Halteres: com `--haltere-scale 2` e o viés 2 abaixo do limiar, uma rotação de 1,3 rad/s acendia 2 a
+  4 dos 203 aferentes (a mosca não sentia o giro). Use `--haltere-scale 0.5 --haltere-offset 0`.
+- DNa02: meça o efeito contra a mesma caminhada sem estímulo (pareada, `mosca.walking.evaluate`);
+  o sinal do giro absoluto confunde o efeito com o desvio próprio da marcha. O teste do treino é o
+  próprio critério do M4 (`quick_m4`) e escolhe o best.pt; cada checkpoint tem suas manias (gira a
+  uma velocidade, cai a outra), então compare vários antes de escolher.
+- PPO de patins (M6): pelo `m6_sensitivity.py`, um passo de sinal de 1e-4 dá KL de 3e-3 nos ganhos
+  por ligação, 1e-4 nos parâmetros por tipo celular, 3e-5 no decodificador e ~1e-7 no codificador:
+  multiplicadores ~1 / 5 / 10 / 100 com taxa-base ~1e-4.
