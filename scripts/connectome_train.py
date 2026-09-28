@@ -1,4 +1,4 @@
-"""O conectoma aprende a patinar por PPO, direto, sem a etapa de andar do plano.
+"""O conectoma aprende a patinar por PPO (direto, ou partindo do conectoma que anda, `--init-from`).
 
 Mesmo ambiente, recompensa, currículo e exploração da MLP (scripts/m2_train.py). O ator é o
 controlador de conectoma (mosca.brain.controller): sem camadas escondidas, só a fiação do
@@ -9,6 +9,13 @@ que vê o estado completo do simulador, como na MLP.
 
 A rede roda na GPU (`--device cuda`), com a memória limitada por `--max-gpu-mem-gb`; a
 física continua na CPU, em threads.
+
+Partindo do conectoma que anda (M4, `--init-from runs/NOME/best.pt`): a rede, os codificadores
+(patas e halteres), o tônus e os ganhos de comando vêm do checkpoint; no decodificador, cada
+ligação neurônio motor → junta que existe nos dois corpos herda o ganho (o tendão longo, que
+na caminhada comanda a adesão, volta a abaixar o tarso); o viés é recalibrado na postura de
+patinação. Use a mesma configuração do controlador da caminhada (τ, ganhos por ligação,
+halteres) e subpassos de RK4 menores que τ (com τ de 5 ms, `--substeps 5`: 2 ms por subpasso).
 
 Com `--capture`, cada iteração grava em runs/<nome>/capture/ as ações de todas as tentativas
 (re-simuláveis bit a bit por scripts/replay_attempt.py) e a versão da política usada na coleta.
@@ -74,8 +81,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--save-every", type=int, default=10)
     p.add_argument("--resume", action="store_true")
     p.add_argument("--capture", action="store_true", help="grava as tentativas para re-simulação (M5/M6)")
+    p.add_argument("--init-from", default="", help="checkpoint do conectoma que anda (m4_distill.py)")
+    p.add_argument("--substeps", type=int, default=2, help="subpassos de RK4 por passo de controle (10 ms)")
+    p.add_argument("--all-synapse-gains", action="store_true", help="ganho treinável por ligação (degrau 2)")
+    p.add_argument("--haltere-input", action="store_true", help="giroscópio do tórax nos aferentes dos halteres")
+    p.add_argument("--syn-lr-mult", type=float, default=3.0)
+    p.add_argument("--cmd-lr-mult", type=float, default=10.0)
     cc = ControllerConfig()
-    for name in ("size_ref", "walk_gain", "enc_std", "prop_offset", "motor_tone", "dec_gain", "init_std"):
+    for name in ("size_ref", "walk_gain", "turn_gain", "enc_std", "prop_offset", "motor_tone", "dec_gain", "init_std",
+                 "tau_scale"):
         p.add_argument(f"--{name.replace('_', '-')}", type=float, default=getattr(cc, name))
     rc = RewardConfig(w_yaw=0.3, sigma_yaw=0.5)  # giro mais punido que na MLP (que virava ~25°/s)
     for name in REWARD_FLAGS:
@@ -101,6 +115,30 @@ def evaluate(env, pol, speed: float) -> dict:
             for k in ("speed", "rolling", "glide_frac", "fell", "seconds", "grounded_frac", "cot")}
 
 
+def load_walking(pol: ConnectomePolicy, path: str, device) -> int:
+    """Copia do conectoma que anda o que vale nos dois corpos (ver a documentação do módulo)."""
+    src = torch.load(path, weights_only=False, map_location=device)
+    weights = dict(src["policy"])
+    if src.get("ema"):
+        weights.update({k: v.to(device) for k, v in src["ema"].items()})
+    own = pol.state_dict()
+    fixed = {"net.tau0", "net.a0", "net.theta0", "net.r_max"}
+    skip = fixed | {k for k in own if k.startswith("dec_") or k == "log_std"}
+    copied = {k: v for k, v in weights.items() if k in own and own[k].shape == v.shape and k not in skip}
+    own.update(copied)
+    pol.load_state_dict(own)
+    # Decodificador: ganho de cada ligação (motor, saída) presente nos dois corpos.
+    walk_pairs = {(int(m), int(o)): i for i, (m, o) in enumerate(zip(weights["dec_motor"].tolist(), weights["dec_out"].tolist()))}
+    n_dec = 0
+    with torch.no_grad():
+        for i, (m, o) in enumerate(zip(pol.dec_motor.tolist(), pol.dec_out.tolist())):
+            j = walk_pairs.get((int(m), int(o)))
+            if j is not None and bool(pol.dec_free[i]) == bool(weights["dec_free"][j]):
+                pol.dec_raw[i] = weights["dec_raw"][j]
+                n_dec += 1
+    return len(copied) + n_dec
+
+
 def main() -> None:
     args = parse_args()
     torch.set_num_threads(args.torch_threads)
@@ -116,9 +154,11 @@ def main() -> None:
     reward_cfg = RewardConfig(**{name: getattr(args, name) for name in REWARD_FLAGS})
     env_cfg = EnvConfig(n_envs=args.envs, n_threads=args.threads, episode_seconds=args.episode_seconds,
                         action_scale=args.action_scale, action_clip=args.action_clip, seed=args.seed, reward=reward_cfg)
-    ctrl_cfg = ControllerConfig(size_ref=args.size_ref, walk_gain=args.walk_gain, enc_std=args.enc_std,
-                                prop_offset=args.prop_offset, motor_tone=args.motor_tone, dec_gain=args.dec_gain,
-                                init_std=args.init_std, control_dt=env_cfg.control_dt, seed=args.seed)
+    ctrl_cfg = ControllerConfig(size_ref=args.size_ref, walk_gain=args.walk_gain, turn_gain=args.turn_gain,
+                                enc_std=args.enc_std, prop_offset=args.prop_offset, motor_tone=args.motor_tone,
+                                dec_gain=args.dec_gain, init_std=args.init_std, control_dt=env_cfg.control_dt,
+                                substeps=args.substeps, seed=args.seed, tau_scale=args.tau_scale,
+                                all_synapse_gains=args.all_synapse_gains, haltere_input=args.haltere_input)
     ppo_cfg = RecurrentPPOConfig(target_kl=args.target_kl, epochs=args.epochs, chunk=args.chunk,
                                  minibatch_chunks=args.minibatch_chunks)
     env = SkateVecEnv(env_cfg)
@@ -127,8 +167,8 @@ def main() -> None:
     critic = Critic(env.obs_dim, env.priv_dim).to(device)
     # Taxas relativas por grupo, medidas pela sensibilidade da ação média a cada grupo: o
     # codificador (proprioceptores abaixo do limiar) é ~40 vezes menos sensível que a rede.
-    mults = {"rede": 1.0, "codificador": args.enc_lr_mult, "tonus": 3.0, "decodificador": 1.0, "comando": 10.0,
-             "exploracao": 1.0}
+    mults = {"rede": 1.0, "codificador": args.enc_lr_mult, "tonus": 3.0, "decodificador": 1.0,
+             "comando": args.cmd_lr_mult, "exploracao": 1.0, "sinapses": args.syn_lr_mult}
     groups = [{"params": ps, "lr": ppo_cfg.lr * mults[name], "mult": mults[name], "name": name}
               for name, ps in pol.param_groups().items()]
     assert sum(p.numel() for g in groups for p in g["params"]) == sum(p.numel() for p in pol.parameters())
@@ -148,6 +188,8 @@ def main() -> None:
         state = ckpt["state"]
         print(f"retomando da iteração {state['it']}")
     else:
+        if args.init_from:
+            print(f"partindo de {args.init_from}: {load_walking(pol, args.init_from, device)} tensores/ganhos copiados")
         # Saída de repouso = postura canônica: calibra com a mosca parada, no meio da faixa de comandos.
         obs_rest, _ = env.reset(np.arange(env.n) + 10**8, np.full(env.n, args.v_start))
         pol.calibrate_rest(to_dev(obs_rest[:8], device), 0.65 * args.v_start)
