@@ -46,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--seed", type=int, default=123)
     p.add_argument("--out", default="", help="JSON com os resultados")
+    p.add_argument("--raw", action="store_true", help="usa os parâmetros crus mesmo se o checkpoint tiver a média móvel")
     return p.parse_args()
 
 
@@ -95,7 +96,10 @@ def main() -> None:
         graph_path = MALECNS_DIR / graph_path.name
     graph = Connectome.load(graph_path)
     pol = ConnectomePolicy(graph, cfg, device=device)
-    pol.load_state_dict(ck["policy"])
+    policy = dict(ck["policy"])
+    if ck.get("ema") and not args.raw:  # checkpoint de iteração com a média móvel dos parâmetros
+        policy.update({k: v.to(device) for k, v in ck["ema"].items()})
+    pol.load_state_dict(policy)
     env = WalkingVecEnv(args.envs, n_threads=args.threads)
     rng = np.random.default_rng(args.seed)
     n = args.envs
