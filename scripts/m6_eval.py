@@ -10,6 +10,8 @@ média ≥ `--min-speed` em 5 s, ≥25% do tempo deslizando e <10% de quedas.
 - `--probes`: provas causais, pareadas com os mesmos testes sem intervenção: calar os DNg100 (a
   mosca deve parar) e estimular o DNa02 de um lado com a corrente de um comando de giro de 1 rad/s
   (deve virar para esse lado).
+- `--slalom`: o percurso de teste (reta e slalom entre cones, mosca.env.course) com o piloto
+  externo dando o giro pedido; conta os cones passados pelo lado certo (`--seconds` alonga a tentativa).
 - `--sheet` / `--gif`: folha de quadros (um a cada 0,25 s) ou GIF do teste 0.
 
 Uso:
@@ -32,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from mosca.brain.controller import ConnectomePolicy, ControllerConfig  # noqa: E402
 from mosca.brain.graph import Connectome  # noqa: E402
 from mosca.capture import ColoredNoise, noise_beta  # noqa: E402
+from mosca.env.course import Pilot, Slalom, draw_cones, thorax_pose  # noqa: E402
 from mosca.env.skate_env import EnvConfig, RewardConfig, SkateVecEnv  # noqa: E402
 from mosca.paths import MALECNS_DIR  # noqa: E402
 from mosca.walking.evaluate import side_current  # noqa: E402
@@ -58,16 +61,19 @@ def load(path: str, device, control_dt: float = 0.0, substeps: int = 0) -> tuple
     return pol, graph, ckpt, ckpt["args"]
 
 
-def make_env(ckpt: dict, n: int, threads: int) -> SkateVecEnv:
+def make_env(ckpt: dict, n: int, threads: int, seconds: float = 0.0) -> SkateVecEnv:
     cfg = dict(ckpt["env_cfg"])
     cfg["reward"] = RewardConfig(**cfg["reward"])
     cfg.update(n_envs=n, n_threads=threads)
+    if seconds > 0:
+        cfg["episode_seconds"] = seconds
     return SkateVecEnv(EnvConfig(**cfg))
 
 
 def run(env: SkateVecEnv, pol: ConnectomePolicy, speed: float, yaw: np.ndarray, noise: ColoredNoise | None = None,
-        silence=None, extra_current=None, on_step=None) -> list[dict]:
-    """Uma leva de testes; devolve as estatísticas de cada tentativa."""
+        silence=None, extra_current=None, on_step=None, pilot: Pilot | None = None) -> list[dict]:
+    """Uma leva de testes; devolve as estatísticas de cada tentativa. Com `pilot`, o giro pedido vem
+    dele a cada passo (vale a partir do passo seguinte, como no treino)."""
     n, device = env.n, pol.device
     obs, _ = env.reset(TEST_ATTEMPT_BASE + np.arange(n), np.full(n, speed), yaw_cmd=yaw)
     v = torch.full((n,), float(speed), device=device)
@@ -84,6 +90,8 @@ def run(env: SkateVecEnv, pol: ConnectomePolicy, speed: float, yaw: np.ndarray, 
             action = pol.decode(r)
             if noise is not None:
                 action = action + std * noise.step()
+            if pilot is not None:
+                env.set_commands(yaw_cmd=pilot.command(*thorax_pose(env)))
             obs, *_ = env.step(action.cpu().numpy())
             if on_step is not None:
                 on_step(env)
@@ -108,6 +116,8 @@ def main() -> None:
     p.add_argument("--yaw", type=float, default=0.0, help="giro pedido (±, metade dos testes para cada lado)")
     p.add_argument("--stochastic", action="store_true", help="com o ruído de exploração do treino")
     p.add_argument("--probes", action="store_true", help="provas causais (DNg100 calado, DNa02 de um lado)")
+    p.add_argument("--slalom", action="store_true", help="percurso de teste com o piloto externo")
+    p.add_argument("--seconds", type=float, default=0.0, help="duração das tentativas (s; padrão: a do treino)")
     p.add_argument("--control-dt", type=float, default=0.0, help="troca o passo de controle do treino (s)")
     p.add_argument("--substeps", type=int, default=0, help="troca os subpassos de RK4 por passo de controle")
     p.add_argument("--threads", type=int, default=8)
@@ -125,7 +135,8 @@ def main() -> None:
     pol, graph, ckpt, train_args = load(args.checkpoint, device, args.control_dt, args.substeps)
     state = ckpt["state"]
     n = args.tests
-    env = make_env(ckpt, n, args.threads)
+    env = make_env(ckpt, n, args.threads, args.seconds)
+    course = Slalom() if args.slalom else None
     yaw = np.where(np.arange(n) % 2 == 0, args.yaw, -args.yaw)
     beta = noise_beta(env.cfg.control_dt, train_args.get("noise_tau", 0.05))
 
@@ -136,8 +147,13 @@ def main() -> None:
           f"giro máximo {state.get('yaw_max', 0.0):.2f} rad/s; desvio do ruído {pol.log_std.exp().mean().item():.2f}")
     if args.stochastic:
         print("(com ruído de exploração: não vale para os critérios)")
-    base = run(env, pol, args.speed, yaw, noise())
+    pilot = Pilot(course, n) if course else None
+    base = run(env, pol, args.speed, yaw, noise(), pilot=pilot)
     table(base)
+    if pilot is not None:
+        print(f"\nslalom ({course.cones} cones a cada {course.spacing:g} cm depois de {course.lead:g} cm de reta): "
+              f"percurso completo em {pilot.done().mean():.0%} dos testes; cones pelo lado certo "
+              f"{pilot.passed.mean():.1f} de {course.cones} em média; errou o lado em {pilot.missed.mean():.0%}")
     fast = np.mean([not e["fell"] and e["seconds"] >= env.cfg.episode_seconds - 1e-9 and e["speed"] >= args.min_speed
                     for e in base])
     glide = np.mean([e["glide_frac"] for e in base])
@@ -167,7 +183,7 @@ def main() -> None:
     if args.gif or args.sheet:
         from PIL import Image, ImageDraw
 
-        env = make_env(ckpt, 1, 1)
+        env = make_env(ckpt, 1, 1, args.seconds)
         renderer = mujoco.Renderer(env.model, height=480, width=854)
         cam = mujoco.MjvCamera()
         cam.type, cam.trackbodyid = mujoco.mjtCamera.mjCAMERA_TRACKING, env.thorax
@@ -176,10 +192,12 @@ def main() -> None:
 
         def grab(e):
             renderer.update_scene(e.datas[0], camera=cam)
+            if course is not None:
+                draw_cones(renderer.scene, course)
             frames.append(Image.fromarray(renderer.render()))
 
         one_noise = ColoredNoise(0, (1, env.act_dim), beta, device) if args.stochastic else None
-        run(env, pol, args.speed, yaw[:1], one_noise, on_step=grab)
+        run(env, pol, args.speed, yaw[:1], one_noise, on_step=grab, pilot=Pilot(course, 1) if course else None)
         label = f"{Path(args.checkpoint).parent.name} it {state['it']}, {args.speed:g} cm/s" + (" (com ruído)" if args.stochastic else "")
         if args.gif:
             Path(args.gif).parent.mkdir(parents=True, exist_ok=True)
