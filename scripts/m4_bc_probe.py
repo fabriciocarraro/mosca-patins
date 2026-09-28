@@ -71,7 +71,7 @@ def collect(args, alpha):
         return d["obs"], d["tgt"], d["tgt_f"], d["valid"], d["v"]
     rng = np.random.default_rng(11)
     n, steps = args.envs, round(args.seconds / 0.002)
-    env, teacher = WalkingVecEnv(n, n_threads=args.threads), WalkingTeacher()
+    env, teacher = WalkingVecEnv(n, n_threads=args.threads), WalkingTeacher().to(args.device)
     v = rng.uniform(0.5, 3.0, n)
     yaw = np.where(rng.random(n) < 0.5, 0.0, rng.uniform(-1.0, 1.0, n))
     env.reset([straight_trajectory(steps + FUTURE_STEPS + 1, a, yaw_speed=b, heading=rng.uniform(-np.pi, np.pi))
