@@ -90,7 +90,10 @@ def main() -> None:
     args = parse_args()
     device = torch.device(args.device)
     ck = torch.load(args.ckpt, weights_only=False, map_location=device)
-    cfg = ControllerConfig(**ck["controller"])
+    ctrl = dict(ck["controller"])
+    if "turn_cells" in ctrl:
+        ctrl["turn_cells"] = tuple(ctrl["turn_cells"])
+    cfg = ControllerConfig(**ctrl)
     graph_path = Path(args.graph or ck["args"].get("graph") or MALECNS_DIR / "controller_graph_min5.npz")
     if not graph_path.exists():  # caminho gravado em outra máquina: o mesmo arquivo na pasta local
         graph_path = MALECNS_DIR / graph_path.name

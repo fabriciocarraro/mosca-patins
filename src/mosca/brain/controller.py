@@ -70,6 +70,7 @@ class ControllerConfig:
     turn_gain: float = 100.0  # corrente nos DNa01/DNa02 do lado da curva por rad/s pedido
     tau_scale: float = 1.0  # multiplica as constantes de tempo sorteadas (τ ~20 ms no modelo de Pugliese)
     haltere_input: bool = False  # sentido de rotação: o giroscópio do tórax entra nos aferentes dos halteres
+    turn_cells: tuple[str, ...] = ("DNa01", "DNa02")  # descendentes que recebem o comando de giro
 
 
 def leg_feature_index(leg: int, act_dim: int = 6 * N_JOINTS) -> np.ndarray:
@@ -138,9 +139,9 @@ class ConnectomePolicy(nn.Module):
         self.register_buffer("dng100", torch.as_tensor(dng100, dtype=torch.long, device=device))
         self.log_walk_gain = nn.Parameter(torch.tensor(float(np.log(cfg.walk_gain)), device=device))
 
-        # Comando de giro nos DNa01/DNa02 de cada lado (esquerdo para giro positivo, anti-horário).
-        turn_l = np.concatenate([c.groups["DNa01_L"], c.groups["DNa02_L"]])
-        turn_r = np.concatenate([c.groups["DNa01_R"], c.groups["DNa02_R"]])
+        # Comando de giro nos descendentes `turn_cells` de cada lado (esquerdo para giro positivo, anti-horário).
+        turn_l = np.concatenate([c.groups[f"{cell}_L"] for cell in cfg.turn_cells])
+        turn_r = np.concatenate([c.groups[f"{cell}_R"] for cell in cfg.turn_cells])
         self.register_buffer("turn_l", torch.as_tensor(turn_l, dtype=torch.long, device=device))
         self.register_buffer("turn_r", torch.as_tensor(turn_r, dtype=torch.long, device=device))
         self.log_turn_gain = nn.Parameter(torch.tensor(float(np.log(cfg.turn_gain)), device=device))
