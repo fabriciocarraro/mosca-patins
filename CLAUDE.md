@@ -97,3 +97,8 @@ cada etapa está no README.
   de ~20 iterações (erro sobe, aluno cai): use `--ema`, pegue o best.pt e rode `m4_eval.py`.
 - Treinos no Spark já travaram em `torch.save` (dois ao mesmo tempo, esperando num futex, com o
   latest.tmp pela metade): o monitor precisa acusar checkpoint parado, e `--resume` retoma.
+- M6, primeiro teste (patina_a: PPO de patins partindo do conectoma que anda): de patins, ele cai em
+  55–70% das tentativas de 5 s (a "Tentativa #1" do plano). Com ganhos por ligação, a divergência KL
+  passou do alvo já na primeira época em toda iteração e a taxa caiu ao piso: o grupo "sinapses"
+  (1 milhão de ganhos, cada um andando ~lr por passo no Adam) precisa de multiplicador bem menor;
+  meça a sensibilidade por grupo antes do treino final.
