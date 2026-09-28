@@ -118,6 +118,15 @@ cada etapa está no README.
 - Determinismo da rede na GPU: a `torch.sparse.mm` (cuSPARSE) soma em ordem variável, e o conectoma
   com neurônios de 5 ms amplifica a diferença (0,07 na ação em 16 passos no começo da tentativa). Isso
   inflava a KL do PPO de patins (a atualização re-executa a política) e quebraria a re-simulação do
-  cérebro na captura (M5). Use `--net-dtype float64` no PPO e na captura (a re-execução reproduz a
-  coleta exatamente; a multiplicação fica 2 a 3× mais lenta). O Triton do venv não compila no Spark
-  (faltam os cabeçalhos do Python do sistema).
+  cérebro na captura (M5). Use `--net-dtype float64` no PPO e na captura (a multiplicação fica 2 a 3×
+  mais lenta). O Triton do venv não compila no Spark (faltam os cabeçalhos do Python do sistema).
+- Captura do treino final: `--capture --deterministic --net-dtype float64`. O modo determinístico põe
+  taxas e pesos numa grade binária antes da multiplicação esparsa (somas exatas em float64, em qualquer
+  ordem; folga de 12× com os pesos do M4, impressa no início do treino) e soma o decodificador por
+  multiplicação densa: a re-simulação do cérebro (`m5_rehearsal.py`, a leva inteira no mesmo lote) dá
+  diferença 0 nas ações. Só em float64 ela ficou a ~2e-6 em tentativas de 5 s (a rede não amplificou o
+  erro como se temia). O cérebro só é re-simulável na mesma máquina da coleta.
+- KL do PPO de patins: `kl_fim` é a do minilote em que a época parou (passou de 2× o alvo) e salta por
+  ser estimada em 16 trechos; a média (`kl` no metrics.jsonl) fica em 0,005–0,016. Com passos coerentes a
+  KL cresce com o quadrado do nº de passos, e a taxa cai sozinha até caber uma época (~7e-6 com os
+  multiplicadores atuais). A norma do gradiente do ator antes do corte é ~1e8.

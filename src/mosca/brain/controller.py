@@ -80,8 +80,9 @@ class ControllerConfig:
     # Determinismo (exige float64): somas exatas na multiplicação esparsa (modo exato da rede, ver
     # mosca.brain.rate_model) e decodificador somando por multiplicação densa, sem atômicas. A mesma
     # política com as mesmas observações dá as mesmas ações bit a bit, e a re-simulação do cérebro
-    # (M5, mosca.capture.replay_brain) reproduz a coleta. Sem isso, a rede de neurônios rápidos
-    # amplifica diferenças de 1e-12 e a re-simulação de uma tentativa de 5 s diverge.
+    # (M5, mosca.capture.replay_brain) reproduz a coleta exatamente. Só em float64, a re-simulação de
+    # tentativas de 5 s ficou a ~2e-6 das ações gravadas (dentro do critério do M5, sem garantia se a
+    # rede ficar mais sensível com o treino). Custa ~17% a mais por passo de controle.
     deterministic: bool = False
 
 
