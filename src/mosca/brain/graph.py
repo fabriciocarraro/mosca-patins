@@ -159,3 +159,33 @@ def build_connectome(min_synapses: int = 5, data_dir: Path = MALECNS_DIR, vnc_on
         count=count,
         groups=groups,
     )
+
+
+def shuffled_connectome(c: Connectome, seed: int = 0, max_rounds: int = 50) -> Connectome:
+    """Controle do M7: mesma quantidade de ligações e sinais por neurônio, parceiros sorteados.
+
+    O alvo de cada ligação é sorteado de novo (permutação global dos pós-sinápticos): cada
+    neurônio mantém as suas saídas (quantas, com quantas sinapses e o sinal, que é dele) e o
+    número de entradas; laços num neurônio só e ligações repetidas são desfeitos trocando o
+    alvo com outra ligação sorteada. Grupos (motores, sensoriais, comando) ficam nos mesmos
+    neurônios, então codificador e decodificador se ligam igual.
+    """
+    rng = np.random.default_rng(seed)
+    pre, count = c.pre.copy(), c.count.copy()
+    post = rng.permutation(c.post)
+    for _ in range(max_rounds):
+        key = pre.astype(np.int64) * c.n + post
+        _, first = np.unique(key, return_index=True)
+        dup = np.ones(len(key), dtype=bool)
+        dup[first] = False
+        bad = np.flatnonzero((pre == post) | dup)
+        if len(bad) == 0:
+            break
+        # parceiros distintos e fora de `bad`: cada rodada é uma permutação (mantém as entradas de cada neurônio)
+        pool = np.setdiff1d(np.arange(len(post)), bad, assume_unique=True)
+        partners = rng.choice(pool, size=len(bad), replace=False)
+        post[bad], post[partners] = post[partners].copy(), post[bad].copy()
+    else:
+        raise RuntimeError("não foi possível desfazer todos os laços e repetições")
+    return Connectome(c.body_id, c.superclass, c.cell_type, c.side, c.sign, c.in_synapses, pre, post.astype(np.int32),
+                      count, {k: v.copy() for k, v in c.groups.items()})

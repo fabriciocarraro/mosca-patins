@@ -45,3 +45,16 @@ def test_groups_do_not_mix_sides(graph):
         side = "L" if leg.endswith("left") else "R"
         for kind in ("motor", "sensory"):
             assert (graph.side[graph.groups[f"{kind}_{leg}"]] == side).all()
+
+
+def test_shuffled_graph_keeps_degrees_and_signs(graph):
+    from mosca.brain.graph import shuffled_connectome
+
+    s = shuffled_connectome(graph, seed=1)
+    assert len(s.pre) == len(graph.pre)
+    assert np.array_equal(np.bincount(s.pre, minlength=s.n), np.bincount(graph.pre, minlength=graph.n))
+    assert np.array_equal(np.bincount(s.post, minlength=s.n), np.bincount(graph.post, minlength=graph.n))
+    assert not (s.pre == s.post).any()
+    assert len(np.unique(s.pre.astype(np.int64) * s.n + s.post)) == len(s.pre)
+    same = np.isin(s.pre.astype(np.int64) * s.n + s.post, graph.pre.astype(np.int64) * graph.n + graph.post).mean()
+    assert same < 0.05  # só sobrevivem por acaso (os neurônios muito conectados atraem ligações)
