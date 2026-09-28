@@ -62,6 +62,7 @@ O PyTorch entra à parte: a versão para CPU no notebook e a cu130 no Spark.
 | `python scripts/connectome_train.py --run NOME --device cuda` | conectoma aprende a patinar por PPO (rede na GPU, física na CPU; `--capture` grava as tentativas) |
 | `python scripts/replay_attempt.py --run NOME --attempt N --gif saida.gif --slow 20` | re-simula a tentativa N bit a bit a partir da captura e grava um GIF em câmera lenta real (subpasso a subpasso) |
 | `python scripts/m5_rehearsal.py --run NOME --count 3` | M5: regenera tentativas sorteadas a partir da captura (física bit a bit, cérebro re-simulado com a política da coleta) |
+| `python scripts/m6_eval.py runs/NOME/latest.pt --speed 3.5 --probes` | M6: testes fixos do conectoma de patins (critério do M2, curvas com `--yaw`, provas causais do DNg100 e do DNa02, `--sheet`/`--gif`, `--stochastic`) |
 | `python scripts/m6_sensitivity.py --init-from CKPT --device cuda` | M6: sensibilidade da ação a cada grupo de parâmetros, para as taxas relativas do PPO |
 | `python scripts/m6_milestones.py --run NOME` | tentativas que vão para o vídeo: números pré-registrados, marcos, recordes e amostra fixa de 5% |
 
