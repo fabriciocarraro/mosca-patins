@@ -323,7 +323,8 @@ def main() -> None:
         if weight > 0 and anchor_ref is not None:
             def anchor_loss():
                 return weight * sum(((p - p0) ** 2).mean() for p, p0 in anchor_ref)
-        state["lr"], stats = recurrent_ppo_update(pol, critic, opt, ro, ppo_cfg, state["lr"], gen, extra_loss=anchor_loss)
+        state["lr"], stats = recurrent_ppo_update(pol, critic, opt, ro, ppo_cfg, state["lr"], gen, extra_loss=anchor_loss,
+                                                  critic_only=warmup)
         if warmup:
             for g, m in zip(actor_groups, saved):
                 g["mult"] = m

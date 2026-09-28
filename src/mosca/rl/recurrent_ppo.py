@@ -82,9 +82,9 @@ def chunks_with_data(valid: torch.Tensor, chunk: int) -> tuple[torch.Tensor, tor
 
 def recurrent_ppo_update(policy: nn.Module, critic: Critic, opt: torch.optim.Optimizer, ro: Rollout,
                          cfg: RecurrentPPOConfig, lr: float, generator: torch.Generator,
-                         extra_loss=None) -> tuple[float, dict]:
+                         extra_loss=None, critic_only: bool = False) -> tuple[float, dict]:
     """`extra_loss`: função sem argumentos somada à perda de cada minilote (por exemplo, uma âncora nos
-    parâmetros de partida)."""
+    parâmetros de partida). `critic_only`: só o crítico aprende (aquecimento), sem re-executar o ator."""
     steps = ro.valid.shape[0]
     valid_adv = ro.adv[ro.valid]
     adv_all = (ro.adv - valid_adv.mean()) / (valid_adv.std() + 1e-8)
@@ -107,6 +107,16 @@ def recurrent_ppo_update(policy: nn.Module, critic: Critic, opt: torch.optim.Opt
             inside = t_abs < steps
             t_c = t_abs.clamp(max=steps - 1)
             mask = inside & ro.valid[t_c, b[None, :]]
+            if critic_only:
+                count = mask.sum().clamp(min=1)
+                value = critic(ro.obs_norm[t_c, b[None, :]], ro.priv_norm[t_c, b[None, :]])
+                value_loss = ((value - ro.ret[t_c, b[None, :]]).pow(2) * mask).sum() / count
+                opt.zero_grad()
+                value_loss.backward()
+                nn.utils.clip_grad_norm_(critic_params, cfg.max_grad_norm)
+                opt.step()
+                stats["value_loss"].append(value_loss.item())
+                continue
             r = ro.states[k, :, b].T.contiguous()  # (N, M)
             means = []
             for t in range(cfg.chunk):
@@ -150,6 +160,6 @@ def recurrent_ppo_update(policy: nn.Module, critic: Critic, opt: torch.optim.Opt
         lr = max(cfg.lr_min, lr / 1.5)
     elif kl < cfg.target_kl / 2:
         lr = min(cfg.lr_max, lr * 1.5)
-    out = {k: float(np.mean(v)) for k, v in stats.items()}
+    out = {k: float(np.mean(v)) if v else 0.0 for k, v in stats.items()}
     out.update(kl_final=kl, epochs=epochs_done)
     return lr, out
