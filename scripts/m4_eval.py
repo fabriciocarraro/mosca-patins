@@ -9,7 +9,9 @@ abaixo de 0,5 rad/s (andar em círculos não conta como reta).
 Testes:
 - reta: 1, 2 e 3 cm/s, rumo inicial sorteado;
 - curva: 2 cm/s com giro pedido de ±1 rad/s (entra nos DNa01/DNa02 do lado da curva);
-- DNa02 sozinho: sem giro pedido, corrente só nos DNa02 de um lado (a do giro de 1 rad/s);
+- DNa02 sozinho: sem giro pedido, corrente só nos DNa02 de um lado (a do giro de 1 rad/s). O efeito é a
+  diferença de giro contra a mesma caminhada sem estímulo (mesmos rumos, pareada): um desvio próprio
+  da marcha não conta a favor nem contra;
 - DNg100 calado: 2 cm/s pedidos, mas a taxa dos dois DNg100 é zerada a cada passo.
 
 Uso:
@@ -146,14 +148,20 @@ def main() -> None:
     turn = pol.log_turn_gain.exp().item()
     extra[dna02_l[:, None], torch.as_tensor(np.flatnonzero(side > 0), device=device)[None, :]] = turn
     extra[dna02_r[:, None], torch.as_tensor(np.flatnonzero(side < 0), device=device)[None, :]] = turn
+    base = run(env, pol, np.full(n, 2.0), np.zeros(n), heads, args.seconds, device)
     res = run(env, pol, np.full(n, 2.0), np.zeros(n), heads, args.seconds, device, extra_current=extra)
-    right_way = np.sign(res["yaw_rate"]) == np.sign(side)
-    results["dna02"] = {"right_direction": float(right_way[res["completed"]].mean()) if res["completed"].any() else 0.0,
-                        "falls": float(res["fell"].mean()),
+    delta = res["yaw_rate"] - base["yaw_rate"]
+    ok_pair = res["completed"] & base["completed"]
+    right_way = np.sign(delta) == np.sign(side)
+    results["dna02"] = {"right_direction": float(right_way[ok_pair].mean()) if ok_pair.any() else 0.0,
+                        "falls": float(res["fell"].mean()), "baseline_yaw": float(base["yaw_rate"].mean()),
                         "yaw_rate_left": float(res["yaw_rate"][side > 0].mean()),
-                        "yaw_rate_right": float(res["yaw_rate"][side < 0].mean())}
-    print(f"DNa02 de um lado (sem giro pedido): giro médio {results['dna02']['yaw_rate_left']:+.2f} (esquerdo) / "
-          f"{results['dna02']['yaw_rate_right']:+.2f} (direito) rad/s; lado certo em {results['dna02']['right_direction']:.0%}")
+                        "yaw_rate_right": float(res["yaw_rate"][side < 0].mean()),
+                        "delta_left": float(delta[side > 0].mean()), "delta_right": float(delta[side < 0].mean())}
+    print(f"DNa02 de um lado (sem giro pedido): giro {results['dna02']['yaw_rate_left']:+.2f} (esquerdo) / "
+          f"{results['dna02']['yaw_rate_right']:+.2f} (direito) rad/s contra {results['dna02']['baseline_yaw']:+.2f} sem estímulo; "
+          f"efeito {results['dna02']['delta_left']:+.2f} / {results['dna02']['delta_right']:+.2f} rad/s; "
+          f"lado certo em {results['dna02']['right_direction']:.0%}")
 
     silence = torch.as_tensor(np.concatenate([graph.groups["DNg100_L"], graph.groups["DNg100_R"]]), device=device)
     res = run(env, pol, np.full(n, 2.0), np.zeros(n), heads, args.seconds, device, silence=silence)
