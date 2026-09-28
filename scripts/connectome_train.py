@@ -42,7 +42,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from mosca.brain.controller import ConnectomePolicy, ControllerConfig  # noqa: E402
 from mosca.capture import ColoredNoise, Recorder, library_versions, noise_beta  # noqa: E402
 from mosca.brain.graph import Connectome  # noqa: E402
-from mosca.env.skate_env import EnvConfig, RewardConfig, SkateVecEnv, attempt_seed  # noqa: E402
+from mosca.env.skate_env import (EnvConfig, RewardConfig, SkateVecEnv, attempt_seed, command_success,  # noqa: E402
+                                 yaw_schedule)
 from mosca.paths import MALECNS_DIR, RUNS  # noqa: E402
 from mosca.rl.ppo import RunningNorm, compute_gae  # noqa: E402
 from mosca.rl.recurrent_ppo import Critic, RecurrentPPOConfig, Rollout, recurrent_ppo_update  # noqa: E402
@@ -67,6 +68,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--v-final", type=float, default=4.0)
     p.add_argument("--v-step", type=float, default=0.5)
     p.add_argument("--push-iters", type=int, default=200)
+    p.add_argument("--yaw-final", type=float, default=0.0,
+                   help="giro máximo pedido no fim do currículo (rad/s; 0 = só retas). A faixa de giro abre "
+                        "de --yaw-step em --yaw-step quando a velocidade já chegou a --v-final")
+    p.add_argument("--yaw-step", type=float, default=0.25)
+    p.add_argument("--yaw-start", type=float, default=0.0, help="giro máximo no começo (rad/s)")
+    p.add_argument("--yaw-switch", type=float, default=1.5, help="duração média de cada trecho de giro (s)")
+    p.add_argument("--yaw-tol", type=float, default=0.5, help="erro médio de giro para a tentativa contar (rad/s)")
+    p.add_argument("--eval-yaw", type=float, default=1.0, help="giro das curvas da avaliação (rad/s)")
     p.add_argument("--action-scale", type=float, default=0.15)
     p.add_argument("--action-clip", type=float, default=3.0)
     p.add_argument("--noise-tau", type=float, default=0.05)
@@ -121,9 +130,11 @@ def to_dev(x, device, dtype=torch.float32):
     return torch.as_tensor(np.asarray(x), dtype=dtype, device=device)
 
 
-def evaluate(env, pol, speed: float) -> dict:
-    """Testes fixos, sem ruído, a partir do repouso."""
-    obs, _ = env.reset(TEST_ATTEMPT_BASE + np.arange(env.n), np.full(env.n, speed))
+def evaluate(env, pol, speed: float, yaw: float = 0.0) -> dict:
+    """Testes fixos, sem ruído, a partir do repouso. Com `yaw` > 0, um terço das tentativas vai reto
+    e os outros dois terços pedem giro de +yaw e −yaw."""
+    yaw_cmd = np.array([0.0, yaw, -yaw])[np.arange(env.n) % 3]
+    obs, _ = env.reset(TEST_ATTEMPT_BASE + np.arange(env.n), np.full(env.n, speed), yaw_cmd=yaw_cmd)
     r = pol.initial_state(env.n)
     v_cmd = to_dev(np.full(env.n, speed), pol.device)
     with torch.no_grad():
@@ -132,7 +143,7 @@ def evaluate(env, pol, speed: float) -> dict:
             obs, *_ = env.step(mean.cpu().numpy())
     eps = env.episode_stats()
     return {f"eval_{k}": float(np.nanmean([e[k] for e in eps]))
-            for k in ("speed", "rolling", "glide_frac", "fell", "seconds", "grounded_frac", "cot")}
+            for k in ("speed", "rolling", "glide_frac", "fell", "seconds", "grounded_frac", "cot", "yaw_error")}
 
 
 def load_walking(pol: ConnectomePolicy, path: str, device) -> int:
@@ -201,7 +212,7 @@ def main() -> None:
     assert sum(p.numel() for g in groups for p in g["params"]) == sum(p.numel() for p in pol.parameters())
     opt = torch.optim.Adam(groups + [{"params": critic.parameters(), "lr": args.critic_lr, "name": "critic"}])
     norm_obs, norm_priv = RunningNorm(env.obs_dim), RunningNorm(env.priv_dim)
-    state = {"it": 0, "v_max": args.v_start, "lr": ppo_cfg.lr, "total_steps": 0, "attempts": 0}
+    state = {"it": 0, "v_max": args.v_start, "yaw_max": args.yaw_start, "lr": ppo_cfg.lr, "total_steps": 0, "attempts": 0}
     beta = noise_beta(env_cfg.control_dt, args.noise_tau)
 
     latest = run_dir / "latest.pt"
@@ -213,6 +224,7 @@ def main() -> None:
         norm_obs.load_state_dict(ckpt["norm_obs"])
         norm_priv.load_state_dict(ckpt["norm_priv"])
         state = ckpt["state"]
+        state.setdefault("yaw_max", 0.0)
         print(f"retomando da iteração {state['it']}")
     else:
         if args.init_from:
@@ -240,7 +252,8 @@ def main() -> None:
           f"dispositivo {device}")
     if args.deterministic:
         print(f"controlador determinístico: folga da soma exata {pol.net.exact_margin():.1f}x")
-    print("  it   passos  retorno  dur(s) queda%  vel   rol  desliza v_max sucesso    lr  kl_fim ép coleta atualiza")
+    print("  it   passos  retorno  dur(s) queda%  vel   rol  desliza v_max sucesso    lr  kl_fim ép coleta atualiza "
+          "giro erro_giro")
     for it in range(state["it"], args.iters):
         t0 = time.perf_counter()
         attempts = np.arange(it * n, (it + 1) * n)
@@ -249,7 +262,9 @@ def main() -> None:
         v_cmd = rng.uniform(0.3 * v_max, v_max, n)
         p_push = max(0.0, 0.5 * (1 - it / args.push_iters)) if args.push_iters > 0 else 0.0
         push = np.where(rng.random(n) < p_push, v_cmd, 0.0)
-        obs, priv = env.reset(attempts, v_cmd, push)
+        yaw_max = state["yaw_max"]
+        yaw_sched = yaw_schedule(rng, n, horizon, yaw_max, args.yaw_switch / env_cfg.control_dt)
+        obs, priv = env.reset(attempts, v_cmd, push, yaw_cmd=yaw_sched[0])
         noise_src = ColoredNoise(attempt_seed(args.seed, -1 - it), (n, env.act_dim), beta, device)
         recorder = Recorder(env, it, attempts, v_cmd, push) if args.capture else None
         if args.capture:  # versão da política desta coleta (antes da atualização)
@@ -296,6 +311,7 @@ def main() -> None:
                 raw_obs.append(obs[alive])
                 raw_priv.append(priv[alive])
                 action_np = action.cpu().numpy()
+                env.set_commands(yaw_cmd=yaw_sched[t])
                 if recorder is not None:
                     recorder.before_step(action_np)
                 obs, priv, reward, term, trunc = env.step(action_np)
@@ -338,11 +354,12 @@ def main() -> None:
         del ro, buf, states
 
         episodes = env.episode_stats()
-        ok = [e for e in episodes if not e["fell"] and e["steps"] >= horizon
-              and abs(e["speed"] - e["v_cmd"]) < max(0.5, 0.25 * e["v_cmd"])]
-        success = len(ok) / n
-        if success >= 0.8:
-            state["v_max"] = min(args.v_final, v_max + args.v_step)
+        success = command_success(episodes, horizon, args.yaw_tol if args.yaw_final > 0 else None)
+        if success >= 0.8:  # currículo: primeiro a faixa de velocidade, depois a de giro
+            if v_max < args.v_final:
+                state["v_max"] = min(args.v_final, v_max + args.v_step)
+            elif args.yaw_final > 0:
+                state["yaw_max"] = min(args.yaw_final, yaw_max + args.yaw_step)
         state["it"] = it + 1
         state["total_steps"] += int(valid[:steps].sum())
         state["attempts"] += n
@@ -351,7 +368,7 @@ def main() -> None:
             return float(np.mean([e[key] for e in episodes]))
 
         metrics = {"it": it, "steps": state["total_steps"], "attempts": state["attempts"], "v_max": v_max,
-                   "p_push": p_push, "return": mean_of("return"), "seconds": mean_of("seconds"), "fell": mean_of("fell"),
+                   "yaw_max": yaw_max, "yaw_error": mean_of("yaw_error"), "p_push": p_push, "return": mean_of("return"), "seconds": mean_of("seconds"), "fell": mean_of("fell"),
                    "speed": mean_of("speed"), "rolling": mean_of("rolling"), "glide_frac": mean_of("glide_frac"),
                    "grounded_frac": mean_of("grounded_frac"), "success": success, "lr": state["lr"],
                    "std": float(pol.log_std.detach().exp().mean()), "walk_gain": pol.log_walk_gain.exp().item(),
@@ -360,10 +377,13 @@ def main() -> None:
                    **stats}
         if args.eval_every and (it + 1) % args.eval_every == 0:
             eval_speed = min(args.eval_speed, state["v_max"])
-            ev = evaluate(env, pol, eval_speed)
-            metrics.update(ev, eval_v_cmd=eval_speed)
+            eval_yaw = min(args.eval_yaw, state["yaw_max"])
+            ev = evaluate(env, pol, eval_speed, eval_yaw)
+            metrics.update(ev, eval_v_cmd=eval_speed, eval_yaw_cmd=eval_yaw)
             print(f"      avaliação sem ruído a {eval_speed:g} cm/s: vel {ev['eval_speed']:.2f}, rolamento "
-                  f"{ev['eval_rolling']:.2f}, desliza {ev['eval_glide_frac']:.2f}, quedas {ev['eval_fell']:.0%}", flush=True)
+                  f"{ev['eval_rolling']:.2f}, desliza {ev['eval_glide_frac']:.2f}, quedas {ev['eval_fell']:.0%}, "
+                  f"erro de giro {ev['eval_yaw_error']:.2f} rad/s" + (f" (curvas de ±{eval_yaw:g})" if eval_yaw > 0 else ""),
+                  flush=True)
         with open(run_dir / "metrics.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(metrics) + "\n")
         with open(run_dir / "attempts.jsonl", "a", encoding="utf-8") as f:
@@ -372,7 +392,7 @@ def main() -> None:
         print(f"{it:4d} {state['total_steps']:8d} {metrics['return']:8.1f} {metrics['seconds']:6.2f} "
               f"{100 * metrics['fell']:5.1f} {metrics['speed']:5.2f} {metrics['rolling']:5.2f} "
               f"{metrics['glide_frac']:6.2f} {v_max:5.1f} {success:6.2f} {state['lr']:.1e} {stats['kl_final']:.4f} "
-              f"{stats['epochs']:2d} {t_collect:6.1f} {t_update:8.1f}", flush=True)
+              f"{stats['epochs']:2d} {t_collect:6.1f} {t_update:8.1f} {yaw_max:4.2f} {metrics['yaw_error']:9.2f}", flush=True)
         save(latest)
         if (it + 1) % args.save_every == 0:
             save(run_dir / "checkpoints" / f"it{it + 1:05d}.pt")

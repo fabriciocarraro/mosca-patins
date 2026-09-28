@@ -79,6 +79,33 @@ def attempt_seed(run_seed: int, attempt: int) -> int:
     return int.from_bytes(digest[:4], "little")
 
 
+def yaw_schedule(rng: np.random.Generator, n: int, steps: int, yaw_max: float, switch_steps: float,
+                 p_straight: float = 0.25) -> np.ndarray:
+    """Giro pedido (rad/s) a cada passo, (steps, n): constante por trechos de duração sorteada em
+    [0,5; 1,5] × `switch_steps` passos; em cada trecho, reta com probabilidade `p_straight` ou giro
+    uniforme em [−yaw_max, yaw_max] (currículo de curvas; trocas frequentes fazem um slalom)."""
+    out = np.zeros((steps, n))
+    if yaw_max <= 0:
+        return out
+    for i in range(n):
+        t = 0
+        while t < steps:
+            length = max(1, round(rng.uniform(0.5, 1.5) * switch_steps))
+            straight = rng.random() < p_straight
+            out[t : t + length, i] = 0.0 if straight else rng.uniform(-yaw_max, yaw_max)
+            t += length
+    return out
+
+
+def command_success(episodes: list[dict], horizon: int, yaw_tol: float | None = None) -> float:
+    """Fração de tentativas que chegaram ao fim sem cair, com a velocidade média a menos de
+    max(0,5 cm/s; 25%) da pedida e, se `yaw_tol` for dado, com o erro médio de giro abaixo dele."""
+    ok = [e for e in episodes if not e["fell"] and e["steps"] >= horizon
+          and abs(e["speed"] - e["v_cmd"]) < max(0.5, 0.25 * e["v_cmd"])
+          and (yaw_tol is None or e["yaw_error"] < yaw_tol)]
+    return len(ok) / max(len(episodes), 1)
+
+
 class SkateVecEnv:
     def __init__(self, cfg: EnvConfig = EnvConfig(), model: mujoco.MjModel | None = None):
         self.cfg = cfg
@@ -151,8 +178,10 @@ class SkateVecEnv:
 
     # ------------------------------------------------------------------ reset
 
-    def reset(self, attempts: np.ndarray, v_cmd: np.ndarray, push: np.ndarray | None = None):
-        """Recomeça todos os ambientes; `push` é a velocidade inicial (cm/s), uma ajuda do currículo."""
+    def reset(self, attempts: np.ndarray, v_cmd: np.ndarray, push: np.ndarray | None = None,
+              yaw_cmd: np.ndarray | None = None):
+        """Recomeça todos os ambientes; `push` é a velocidade inicial (cm/s), uma ajuda do currículo;
+        `yaw_cmd`, o giro pedido no começo (rad/s; muda durante a tentativa por `set_commands`)."""
         qpos, qvel, act, ctrl = self.rest
         push = np.zeros(self.n) if push is None else push
         for i, attempt in enumerate(attempts):
@@ -166,9 +195,10 @@ class SkateVecEnv:
             mujoco.mj_forward(self.model, d)
             self.stats[i] = {"attempt": int(attempt), "v_cmd": float(v_cmd[i]), "push": float(push[i]),
                              "distance": 0.0, "rolled": 0.0, "moved": 0.0, "glide_steps": 0,
-                             "return": 0.0, "fell": False, "leg_floor": 0, "work": 0.0, "grounded": 0.0}
+                             "return": 0.0, "fell": False, "leg_floor": 0, "work": 0.0, "grounded": 0.0,
+                             "yaw_cmd": 0.0 if yaw_cmd is None else float(yaw_cmd[i]), "yaw_sum": 0.0, "yaw_err": 0.0}
         self.v_cmd[:] = v_cmd
-        self.yaw_cmd[:] = 0.0
+        self.yaw_cmd[:] = 0.0 if yaw_cmd is None else yaw_cmd
         self.ema_v[:] = push
         self.prev_action[:] = 0.0
         self.steps[:] = 0
@@ -177,6 +207,12 @@ class SkateVecEnv:
         for i in range(self.n):
             obs[i], priv[i], *_ = self._measure(i, np.zeros(self.act_dim), update=False)
         return obs, priv
+
+    def set_commands(self, yaw_cmd: np.ndarray | None = None) -> None:
+        """Troca o giro pedido (rad/s) a partir do próximo passo: vale para a recompensa desse passo e
+        entra na observação que ele devolve."""
+        if yaw_cmd is not None:
+            self.yaw_cmd[:] = yaw_cmd
 
     # ------------------------------------------------------------------- step
 
@@ -287,6 +323,8 @@ class SkateVecEnv:
             s["leg_floor"] += leg_floor
             s["work"] += power * cfg.control_dt
             s["grounded"] += contact
+            s["yaw_sum"] += yaw_rate * cfg.control_dt
+            s["yaw_err"] += abs(yaw_rate - self.yaw_cmd[i]) * cfg.control_dt
             if grounded.any():
                 speed = abs(v_fwd)
                 s["rolled"] += float(np.minimum(np.abs(along[grounded]), 1.2 * speed).sum())
@@ -316,6 +354,8 @@ class SkateVecEnv:
             s["rolling"] = s["rolled"] / s["moved"] if s["moved"] > 0 else 0.0
             s["glide_frac"] = s["glide_steps"] / steps
             s["grounded_frac"] = s["grounded"] / steps
+            s["yaw_rate"] = s["yaw_sum"] / s["seconds"]  # giro médio (rad/s)
+            s["yaw_error"] = s["yaw_err"] / s["seconds"]  # erro médio de giro em relação ao pedido (rad/s)
             s["cot"] = s["work"] / (self.weight * abs(s["distance"])) if abs(s["distance"]) > 1e-3 else float("nan")
             out.append(s)
         return out

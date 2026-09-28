@@ -75,20 +75,26 @@ class IterationCapture:
     checkpoint_every: int
     qpos: np.ndarray  # (K, n, nq) estado da física a cada checkpoint_every passos (antes do passo)
     qvel: np.ndarray  # (K, n, nv)
+    yaw_cmd: np.ndarray | None = None  # (T, n) giro pedido em cada passo (None nas capturas antigas: sempre 0)
+
+    def yaw_at(self, t: int) -> np.ndarray:
+        return np.zeros(len(self.attempts)) if self.yaw_cmd is None else self.yaw_cmd[t]
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.stem + ".tmp.npz")
+        extra = {} if self.yaw_cmd is None else {"yaw_cmd": self.yaw_cmd}
         np.savez_compressed(tmp, iteration=self.iteration, attempts=self.attempts, v_cmd=self.v_cmd, push=self.push,
                             steps=self.steps, actions=self.actions, checkpoint_every=self.checkpoint_every,
-                            qpos=self.qpos, qvel=self.qvel)
+                            qpos=self.qpos, qvel=self.qvel, **extra)
         tmp.replace(path)
 
     @staticmethod
     def load(path: Path) -> "IterationCapture":
         z = np.load(path, allow_pickle=False)
         return IterationCapture(int(z["iteration"]), z["attempts"], z["v_cmd"], z["push"], z["steps"], z["actions"],
-                                int(z["checkpoint_every"]), z["qpos"], z["qvel"])
+                                int(z["checkpoint_every"]), z["qpos"], z["qvel"],
+                                z["yaw_cmd"] if "yaw_cmd" in z.files else None)
 
 
 class Recorder:
@@ -98,20 +104,23 @@ class Recorder:
         self.env, self.iteration, self.every = env, iteration, checkpoint_every
         self.attempts, self.v_cmd, self.push = np.asarray(attempts), np.asarray(v_cmd, float), np.asarray(push, float)
         self.actions = np.zeros((env.max_steps, env.n, env.act_dim), np.float32)
+        self.yaw = np.zeros((env.max_steps, env.n))
         self.qpos, self.qvel = [], []
         self.t = 0
 
     def before_step(self, actions: np.ndarray) -> None:
-        """Chame com as ações que vão para env.step, antes de chamá-lo."""
+        """Chame com as ações que vão para env.step, antes de chamá-lo (e depois de set_commands)."""
         if self.t % self.every == 0:
             self.qpos.append(np.stack([d.qpos.copy() for d in self.env.datas]))
             self.qvel.append(np.stack([d.qvel.copy() for d in self.env.datas]))
         self.actions[self.t] = actions
+        self.yaw[self.t] = self.env.yaw_cmd
         self.t += 1
 
     def finish(self) -> IterationCapture:
         return IterationCapture(self.iteration, self.attempts, self.v_cmd, self.push, self.env.steps.copy(),
-                                self.actions[: self.t], self.every, np.array(self.qpos), np.array(self.qvel))
+                                self.actions[: self.t], self.every, np.array(self.qpos), np.array(self.qvel),
+                                self.yaw[: self.t].copy())
 
 
 def replay(cap: IterationCapture, index: int, env_cfg: EnvConfig, on_step=None, on_substep=None) -> dict:
@@ -123,7 +132,8 @@ def replay(cap: IterationCapture, index: int, env_cfg: EnvConfig, on_step=None, 
     """
     cfg = EnvConfig(**{**env_cfg.__dict__, "n_envs": 1, "n_threads": 1})
     env = SkateVecEnv(cfg)
-    env.reset(cap.attempts[index : index + 1], cap.v_cmd[index : index + 1], cap.push[index : index + 1])
+    env.reset(cap.attempts[index : index + 1], cap.v_cmd[index : index + 1], cap.push[index : index + 1],
+              cap.yaw_at(0)[index : index + 1])
     step = {"t": 0}
     if on_substep is not None:
         env.substep_callback = lambda e, sub: on_substep(e, step["t"], sub)
@@ -134,6 +144,7 @@ def replay(cap: IterationCapture, index: int, env_cfg: EnvConfig, on_step=None, 
             k = t // cap.checkpoint_every
             worst = max(worst, float(np.abs(d.qpos - cap.qpos[k, index]).max()), float(np.abs(d.qvel - cap.qvel[k, index]).max()))
         step["t"] = t
+        env.set_commands(yaw_cmd=cap.yaw_at(t)[index : index + 1])
         env.step(cap.actions[t, index][None])
         if on_step is not None:
             on_step(env, t)
@@ -153,7 +164,7 @@ def replay_brain(cap: IterationCapture, env_cfg: EnvConfig, policy, noise_seed: 
     cada passo de controle (para o painel do cérebro).
     """
     env = SkateVecEnv(EnvConfig(**{**env_cfg.__dict__, "n_envs": len(cap.attempts)}))
-    obs, _ = env.reset(cap.attempts, cap.v_cmd, cap.push)
+    obs, _ = env.reset(cap.attempts, cap.v_cmd, cap.push, cap.yaw_at(0))
     device = policy.device
     noise = ColoredNoise(noise_seed, (env.n, env.act_dim), beta, device)
     std = policy.log_std.detach().exp()
@@ -168,6 +179,7 @@ def replay_brain(cap: IterationCapture, env_cfg: EnvConfig, policy, noise_seed: 
             worst = np.maximum(worst, np.where(alive, np.abs(action - cap.actions[t]).max(axis=1), 0.0))
             if on_step is not None:
                 on_step(env, t, r, mean)
+            env.set_commands(yaw_cmd=cap.yaw_at(t))
             obs, *_ = env.step(cap.actions[t])
     env.close()
     return worst
