@@ -111,3 +111,7 @@ cada etapa está no README.
 - PPO de patins (M6): pelo `m6_sensitivity.py`, um passo de sinal de 1e-4 dá KL de 3e-3 nos ganhos
   por ligação, 1e-4 nos parâmetros por tipo celular, 3e-5 no decodificador e ~1e-7 no codificador:
   multiplicadores ~1 / 5 / 10 / 100 com taxa-base ~1e-4.
+- M4 cumprido com `--syn-lr-mult 0.3` (ganhos por ligação 10× mais lentos que antes): com 3, cada
+  atualização mexia demais na política e o DAgger desandava depois de ~10 iterações; com 0,3, os testes
+  do critério ficaram estáveis (98%/100% na iteração 6, 92%/100% na 9). Checkpoint: runs/anda_r5I/best_it6.pt
+  no Spark e no notebook.
