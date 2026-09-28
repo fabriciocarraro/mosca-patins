@@ -20,6 +20,10 @@ isso, um aluno que fica para trás recebe da professora ordens de "correr para a
 dependem de um atraso que ele não tem como saber. `--student mlp` troca o conectoma por uma
 MLP com as mesmas entradas (controle: separa os problemas da receita dos da fiação).
 
+O desempenho do aluno sozinho oscila entre iterações (anda num teste, fica parado no seguinte)
+sem que o erro mostre. Com `--ema`, os testes usam a média móvel exponencial dos parâmetros, e
+o melhor teste (fração sem cair × velocidade/pedida, no máximo 1) fica salvo em best.pt.
+
 `--teacher` troca a professora: "flybody" (a política publicada, que só anda reagindo em menos
 de 10 ms) ou o checkpoint de uma professora lenta (m4_slow_teacher.py), que anda com a latência
 de uma rede de neurônios lentos; o alvo é o comando dela depois do atraso e do filtro.
@@ -37,6 +41,7 @@ import argparse
 import json
 import sys
 import time
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
 from pathlib import Path
 
@@ -125,6 +130,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--mlp-layers", type=int, default=2)
     p.add_argument("--student-lag-ms", type=float, default=0.0, help="MLP: atraso das entradas")
     p.add_argument("--student-tau-ms", type=float, default=0.0, help="MLP: filtro na saída (neurônios lentos)")
+    p.add_argument("--ema", type=float, default=0.0,
+                   help="decaimento por atualização da média móvel dos parâmetros usada nos testes (0 = sem)")
     p.add_argument("--eval-every", type=int, default=5)
     p.add_argument("--eval-seconds", type=float, default=5.0)
     p.add_argument("--resume", action="store_true")
@@ -136,6 +143,21 @@ def parse_args() -> argparse.Namespace:
 
 def to_dev(x, device, dtype=torch.float32):
     return torch.as_tensor(np.asarray(x), dtype=dtype, device=device)
+
+
+@contextmanager
+def swapped(module: torch.nn.Module, params: dict[str, torch.Tensor]):
+    """Troca temporariamente os parâmetros do módulo pelos de `params` (a média móvel)."""
+    backup = {k: p.detach().clone() for k, p in module.named_parameters()}
+    with torch.no_grad():
+        for k, p in module.named_parameters():
+            p.copy_(params[k])
+    try:
+        yield
+    finally:
+        with torch.no_grad():
+            for k, p in module.named_parameters():
+                p.copy_(backup[k])
 
 
 def actuator_filter(x: np.ndarray, alpha: np.ndarray) -> np.ndarray:
@@ -240,6 +262,7 @@ def main() -> None:
     opt = torch.optim.Adam([{"params": ps, "lr": args.lr * mults[name], "name": name}
                             for name, ps in pol.param_groups().items()])
     state = {"it": 0}
+    ema = None
     tgt_std = tgt_std_f = None
     latest = run_dir / "latest.pt"
     if args.init_from and not (args.resume and latest.exists()):
@@ -260,6 +283,8 @@ def main() -> None:
         pol.load_state_dict(ckpt["policy"])
         opt.load_state_dict(ckpt["opt"])
         state, tgt_std, tgt_std_f = ckpt["state"], ckpt["tgt_std"], ckpt.get("tgt_std_f")
+        if ckpt.get("ema"):
+            ema = {k: v.to(device) for k, v in ckpt["ema"].items()}
         print(f"retomando da iteração {state['it']}")
     else:
         (run_dir / "config.json").write_text(json.dumps(
@@ -329,6 +354,12 @@ def main() -> None:
             (loss_f if args.filtered_loss else loss).backward()
             torch.nn.utils.clip_grad_norm_(pol.parameters(), 1.0)
             opt.step()
+            if args.ema > 0:
+                with torch.no_grad():
+                    if ema is None:
+                        ema = {k: p.detach().clone() for k, p in pol.named_parameters()}
+                    for k, p in pol.named_parameters():
+                        ema[k].lerp_(p.detach(), 1.0 - args.ema)
             losses.append(loss.item())
             losses_f.append(loss_f.item())
         t_train = time.perf_counter() - t1
@@ -346,21 +377,33 @@ def main() -> None:
         if args.eval_every and (it + 1) % args.eval_every == 0:
             cmds = [TEST_COMMANDS[j % len(TEST_COMMANDS)] for j in range(n)]
             ev_refs = [straight_trajectory(round(args.eval_seconds / 0.002) + FUTURE_STEPS + 1, v, yaw_speed=y) for v, y in cmds]
-            ev = rollout(env, pol, teacher, ev_refs, np.array([c[0] for c in cmds]), np.array([c[1] for c in cmds]),
-                         np.zeros(n, bool), args.chunk, device)
+            with swapped(pol, ema) if ema is not None else nullcontext():
+                ev = rollout(env, pol, teacher, ev_refs, np.array([c[0] for c in cmds]), np.array([c[1] for c in cmds]),
+                             np.zeros(n, bool), args.chunk, device)
             ok = (~ev["fell"]) & (ev["t"] >= round(args.eval_seconds / 0.002) - 1)
             ev_speed = ev["dist"] / np.maximum(ev["t"] * 0.002, 1e-6)
             metrics.update(eval_success=float(ok.mean()), eval_falls=float(ev["fell"].mean()),
                            eval_speed_ratio=float(np.mean(ev_speed / np.array([c[0] for c in cmds]))))
+            score = float(ok.mean()) * min(1.0, metrics["eval_speed_ratio"])
+            best = score > state.get("best_score", -1.0)
             print(f"      teste sem professora ({args.eval_seconds:g} s): {ok.mean():.0%} sem cair até o fim, "
-                  f"velocidade/pedida {metrics['eval_speed_ratio']:.2f}", flush=True)
+                  f"velocidade/pedida {metrics['eval_speed_ratio']:.2f}{' (melhor até aqui)' if best else ''}", flush=True)
+            if best:
+                state["best_score"], state["best_it"] = score, it + 1
+                policy = pol.state_dict()
+                if ema is not None:
+                    policy.update({k: v.detach().clone() for k, v in ema.items()})
+                torch.save({"policy": policy, "state": dict(state), "tgt_std": tgt_std, "tgt_std_f": tgt_std_f,
+                            "controller": asdict(cfg), "args": vars(args), "eval": {k: metrics[k] for k in metrics
+                                                                                    if k.startswith("eval_")}},
+                           run_dir / "best.pt")
         with open(run_dir / "metrics.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(metrics) + "\n")
         print(f"{it:4d} {beta:6.2f} {metrics['loss']:10.3f} ({metrics['loss_first']:.2f}→{metrics['loss_last']:.2f}) "
               f"{metrics['loss_filt']:9.3f} {falls:14.2f} {ratio:17.2f} {t_collect:7.1f} {t_train:7.1f}", flush=True)
         state["it"] = it + 1
         ckpt = {"policy": pol.state_dict(), "opt": opt.state_dict(), "state": state, "tgt_std": tgt_std,
-                "tgt_std_f": tgt_std_f, "controller": asdict(cfg), "args": vars(args)}
+                "tgt_std_f": tgt_std_f, "controller": asdict(cfg), "args": vars(args), "ema": ema}
         torch.save(ckpt, latest.with_suffix(".tmp"))
         latest.with_suffix(".tmp").replace(latest)
         if (it + 1) % 10 == 0:
