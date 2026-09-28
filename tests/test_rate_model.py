@@ -81,3 +81,18 @@ def test_surrogate_gradient_reaches_a_silent_network():
         r.sum().backward()
         grads.append(net.log_theta.grad.abs().sum().item())
     assert grads[0] == 0.0 and grads[1] > 0.0
+
+
+def test_synapse_gains_start_neutral_and_learn():
+    w, params = _random_net()
+    plain = PuglieseNet(w, params, dtype=torch.float64)
+    gained = PuglieseNet(w, params, dtype=torch.float64, gain_rows=np.arange(10, 20))
+    assert gained.log_gain.numel() == w[10:20].nnz
+    current = torch.zeros(w.shape[0], 2, dtype=torch.float64)
+    current[:5] = 300.0
+    r1 = r2 = torch.zeros(w.shape[0], 2, dtype=torch.float64)
+    for _ in range(20):
+        r1, r2 = plain(r1, current, dt=2e-3), gained(r2, current, dt=2e-3)
+    assert torch.allclose(r1, r2, atol=1e-9)  # ganhos em 1: mesma rede
+    r2[10:20].sum().backward()
+    assert gained.log_gain.grad is not None and gained.log_gain.grad.abs().sum() > 0

@@ -63,6 +63,7 @@ class ControllerConfig:
     init_std: float = 0.6  # desvio inicial do ruído de exploração, em unidades de ação
     seed: int = 0
     body: str = "skate"  # "skate" (42 saídas) ou "walk" (42 + adesão das 6 garras)
+    motor_synapse_gains: bool = False  # degrau 2 da escada: ganho por ligação nas entradas dos motores
     turn_gain: float = 100.0  # corrente nos DNa01/DNa02 do lado da curva por rad/s pedido
 
 
@@ -88,7 +89,9 @@ class ConnectomePolicy(nn.Module):
         rng = np.random.default_rng(cfg.seed)
         sizes, _, _ = estimate_sizes(c.body_id)
         params = sample_params(sizes, rng, reference=cfg.size_ref * np.nanmedian(sizes))
-        self.net = PuglieseNet(signed_matrix(c), params, cell_type=c.cell_type, device=device, surrogate=True)
+        leg_motors = np.concatenate([c.groups[f"motor_{leg}"] for leg in LEGS])
+        self.net = PuglieseNet(signed_matrix(c), params, cell_type=c.cell_type, device=device, surrogate=True,
+                               gain_rows=leg_motors if cfg.motor_synapse_gains else None)
         self.n = c.n
         gen = torch.Generator().manual_seed(cfg.seed)
 
@@ -163,12 +166,15 @@ class ConnectomePolicy(nn.Module):
 
     def param_groups(self) -> dict[str, list[nn.Parameter]]:
         """Parâmetros por grupo, para taxas de aprendizado relativas (ver connectome_train.py)."""
-        return {"rede": [self.net.log_a, self.net.log_theta, self.net.log_tau],
+        groups = {"rede": [self.net.log_a, self.net.log_theta, self.net.log_tau],
                 "codificador": list(self.enc_w) + list(self.enc_b),
                 "tonus": [self.motor_bias],
                 "decodificador": [self.dec_raw, self.dec_bias],
                 "comando": [self.log_walk_gain, self.log_turn_gain],
                 "exploracao": [self.log_std]}
+        if self.net.has_gains:
+            groups["sinapses"] = [self.net.log_gain]
+        return groups
 
     @property
     def device(self) -> torch.device:

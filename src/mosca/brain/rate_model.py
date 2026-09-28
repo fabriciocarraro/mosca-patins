@@ -15,6 +15,11 @@ O estado fica como (neurônios × lote), contíguo: é o formato que a multiplic
 CSR usa direto. Com o lote na primeira dimensão, as transpostas a cada multiplicação a
 deixavam 7 a 10 vezes mais lenta na GPU.
 
+Degrau 2 da escada de flexibilidade (`gain_rows`): as ligações que chegam aos neurônios
+dessas linhas (no controlador, os motores das patas) ganham um fator positivo treinável por
+ligação (em log, começando em 1); o sinal e a existência de cada ligação continuam os do
+conectoma. A entrada desses neurônios é somada à parte, com os ganhos.
+
 Gradiente substituto (`surrogate=True`): a simulação é exatamente a equação acima, mas no
 cálculo do gradiente um neurônio abaixo do limiar ganha uma inclinação que decai com a
 distância até o limiar (largura θ/2 do próprio neurônio). Sem isso, neurônio calado não
@@ -76,13 +81,27 @@ class _Activation(torch.autograd.Function):
 
 class PuglieseNet(nn.Module):
     def __init__(self, w: sp.csr_matrix, params: NeuronParams, cell_type: np.ndarray | None = None, b: float = B,
-                 device: str | torch.device = "cpu", dtype=torch.float32, surrogate: bool = False):
+                 device: str | torch.device = "cpu", dtype=torch.float32, surrogate: bool = False,
+                 gain_rows: np.ndarray | None = None):
         """`w`: pós × pré com sinal × nº de sinapses (sem o b); `cell_type`: rótulo de cada neurônio
-        para compartilhar os fatores treináveis (None = um fator por neurônio)."""
+        para compartilhar os fatores treináveis (None = um fator por neurônio); `gain_rows`:
+        neurônios cujas ligações de entrada ganham um fator treinável por ligação."""
         super().__init__()
+        w = (b * w).tocsr()
+        self.has_gains = gain_rows is not None and len(gain_rows) > 0
+        if self.has_gains:
+            rows = np.zeros(w.shape[0], dtype=bool)
+            rows[np.asarray(gain_rows)] = True
+            coo = w.tocoo()
+            sel = rows[coo.row]
+            self.register_buffer("gain_post", torch.as_tensor(coo.row[sel], dtype=torch.long, device=device), persistent=False)
+            self.register_buffer("gain_pre", torch.as_tensor(coo.col[sel], dtype=torch.long, device=device), persistent=False)
+            self.register_buffer("gain_val", torch.as_tensor(coo.data[sel], dtype=dtype, device=device), persistent=False)
+            self.log_gain = nn.Parameter(torch.zeros(int(sel.sum()), device=device, dtype=dtype))
+            w = sp.csr_matrix((coo.data[~sel], (coo.row[~sel], coo.col[~sel])), shape=w.shape)
         # Reconstruídas a partir do grafo; fora do state_dict para os checkpoints ficarem pequenos.
-        self.register_buffer("w", sparse_tensor(b * w, device, dtype), persistent=False)
-        self.register_buffer("wt", sparse_tensor((b * w).T.tocsr(), device, dtype), persistent=False)
+        self.register_buffer("w", sparse_tensor(w, device, dtype), persistent=False)
+        self.register_buffer("wt", sparse_tensor(w.T.tocsr(), device, dtype), persistent=False)
         self.surrogate = surrogate
 
         def buf(x):  # parâmetros por neurônio como coluna (N, 1), para somar ao estado (N, lote)
@@ -115,6 +134,9 @@ class PuglieseNet(nn.Module):
     def deriv(self, r: torch.Tensor, current: torch.Tensor, a, theta, tau) -> torch.Tensor:
         """dr/dt para o estado r (N, lote) com corrente externa (N, lote)."""
         drive = _SpMM.apply(self.w, self.wt, r) + current - theta
+        if self.has_gains:
+            weight = self.gain_val * self.log_gain.exp()
+            drive = drive.index_add(0, self.gain_post, weight[:, None] * r[self.gain_pre])
         if self.surrogate:
             rate = _Activation.apply(drive, a, self.r_max, 0.5 * self.theta0)
         else:
