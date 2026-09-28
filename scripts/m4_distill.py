@@ -92,6 +92,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--v-min", type=float, default=0.5)
     p.add_argument("--v-max", type=float, default=3.0)
     p.add_argument("--yaw-max", type=float, default=1.0)
+    p.add_argument("--p-stand", type=float, default=0.0,
+                   help="fração das tentativas com a mosca mandada ficar parada (v = 0, DNg100 calado): sem elas, "
+                        "o aluno pode andar sem depender do DNg100")
     p.add_argument("--beta-iters", type=int, default=15)
     p.add_argument("--beta-min", type=float, default=0.1)
     p.add_argument("--mix", type=float, default=0.0, help="probabilidade inicial de a professora intervir a cada passo")
@@ -275,6 +278,8 @@ def main() -> None:
         n = env.n
         v_cmd = rng.uniform(args.v_min, args.v_max, n)
         yaw = np.where(rng.random(n) < 0.5, 0.0, rng.uniform(-args.yaw_max, args.yaw_max, n))
+        stand = rng.random(n) < args.p_stand
+        v_cmd[stand], yaw[stand] = 0.0, 0.0
         refs = [straight_trajectory(ref_steps, v, yaw_speed=y, heading=rng.uniform(-np.pi, np.pi)) for v, y in zip(v_cmd, yaw)]
         beta = max(args.beta_min, 1.0 - it / max(args.beta_iters, 1))
         driver_teacher = np.zeros(n, bool)
@@ -330,7 +335,8 @@ def main() -> None:
 
         student = ~driver_teacher
         speed = ro["dist"] / np.maximum(ro["t"] * 0.002, 1e-6)
-        ratio = float(np.mean(speed[student] / v_cmd[student])) if student.any() else float("nan")
+        moving = student & (v_cmd > 0)
+        ratio = float(np.mean(speed[moving] / v_cmd[moving])) if moving.any() else float("nan")
         falls = float(np.mean(ro["fell"][student])) if student.any() else float("nan")
         main_losses = losses_f if args.filtered_loss else losses
         metrics = {"it": it, "beta": beta, "mix": mix, "loss": float(np.mean(losses)), "loss_filt": float(np.mean(losses_f)),
