@@ -113,14 +113,17 @@ def main() -> None:
     for speed in (1.0, 2.0, 3.0):
         sel = v == speed
         straight[str(speed)] = {"success": float(ok[sel].mean()), "falls": float(res["fell"][sel].mean()),
-                                "speed_mean": float(res["speed"][sel].mean())}
+                                "speed_mean": float(res["speed"][sel].mean()),
+                                "yaw_mean": float(res["yaw_rate"][sel].mean()), "yaw_sd": float(res["yaw_rate"][sel].std()),
+                                "straight_frac": float((np.abs(res["yaw_rate"][sel]) < 0.5).mean())}
     results["straight"] = straight
     results["straight_success"] = float(ok.mean())
     results["straight_yaw_rate"] = float(res["yaw_rate"][res["completed"]].mean()) if res["completed"].any() else 0.0
     print(f"reta: {ok.mean():.0%} bem-sucedidas (critério: 90%); giro médio sem giro pedido "
           f"{results['straight_yaw_rate']:+.2f} rad/s")
     for speed, s in straight.items():
-        print(f"   {speed} cm/s: {s['success']:.0%} bem-sucedidas, quedas {s['falls']:.0%}, velocidade média {s['speed_mean']:.2f} cm/s")
+        print(f"   {speed} cm/s: {s['success']:.0%} bem-sucedidas, quedas {s['falls']:.0%}, velocidade média {s['speed_mean']:.2f} cm/s, "
+              f"giro {s['yaw_mean']:+.2f} ± {s['yaw_sd']:.2f} rad/s ({s['straight_frac']:.0%} abaixo de 0,5)")
 
     yaw = np.where(np.arange(n) % 2 == 0, 1.0, -1.0)
     res = run(env, pol, np.full(n, 2.0), yaw, heads, args.seconds, device)
