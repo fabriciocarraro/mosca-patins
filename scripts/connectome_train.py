@@ -88,6 +88,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--haltere-scale", type=float, default=2.0)
     p.add_argument("--haltere-offset", type=float, default=None)
     p.add_argument("--turn-cells", default="DNa01,DNa02")
+    p.add_argument("--net-dtype", choices=("float32", "float64"), default="float32",
+                   help="precisão da rede (float64: a atualização re-executa a mesma política da coleta)")
     p.add_argument("--syn-lr-mult", type=float, default=3.0)
     p.add_argument("--lr", type=float, default=3e-4, help="taxa-base inicial do ator (ajustada pela KL)")
     p.add_argument("--mults", default="", help='multiplicadores por grupo, "rede=0.85,decodificador=1.8,..." '
@@ -166,7 +168,7 @@ def main() -> None:
                                 substeps=args.substeps, seed=args.seed, tau_scale=args.tau_scale,
                                 all_synapse_gains=args.all_synapse_gains, haltere_input=args.haltere_input,
                                 haltere_scale=args.haltere_scale, haltere_offset=args.haltere_offset,
-                                turn_cells=tuple(args.turn_cells.split(",")))
+                                turn_cells=tuple(args.turn_cells.split(",")), net_dtype=args.net_dtype)
     ppo_cfg = RecurrentPPOConfig(target_kl=args.target_kl, epochs=args.epochs, chunk=args.chunk, lr=args.lr,
                                  minibatch_chunks=args.minibatch_chunks)
     env = SkateVecEnv(env_cfg)
@@ -240,7 +242,7 @@ def main() -> None:
                "priv_norm": torch.zeros(T, n, env.priv_dim, device=device),
                "act": torch.zeros(T, n, A, device=device), "mean": torch.zeros(T, n, A, device=device),
                "logp": torch.zeros(T, n, device=device)}
-        states = torch.zeros((T + chunk - 1) // chunk, graph.n, n, device=device)
+        states = torch.zeros((T + chunk - 1) // chunk, graph.n, n, device=device, dtype=pol.initial_state(1).dtype)
         rew = np.zeros((T, n), np.float32)
         val = np.zeros((T, n), np.float32)
         valid = np.zeros((T, n), bool)

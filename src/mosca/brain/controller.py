@@ -72,6 +72,11 @@ class ControllerConfig:
     haltere_scale: float = 2.0  # rad/s por unidade na entrada dos halteres
     haltere_offset: float | None = None  # viés inicial dos halteres em relação ao limiar (padrão: prop_offset)
     turn_cells: tuple[str, ...] = ("DNa01", "DNa02")  # descendentes que recebem o comando de giro
+    # "float64": estado e parâmetros da rede em precisão dupla. Na GPU, a multiplicação esparsa soma em
+    # ordem variável; em float32 a diferença entre duas execuções (1e-3 numa escala de 3 mil) é amplificada
+    # pela rede com neurônios de 5 ms até 0,07 na ação em 16 passos, e o PPO (que re-executa a política na
+    # atualização) e a re-simulação da captura deixam de reproduzir a coleta. Em float64, 1e-12.
+    net_dtype: str = "float32"
 
 
 def leg_feature_index(leg: int, act_dim: int = 6 * N_JOINTS) -> np.ndarray:
@@ -99,9 +104,10 @@ class ConnectomePolicy(nn.Module):
         if cfg.tau_scale != 1.0:
             params = replace(params, tau=params.tau * cfg.tau_scale)
         leg_motors = np.concatenate([c.groups[f"motor_{leg}"] for leg in LEGS])
+        self.net_dtype = torch.float64 if cfg.net_dtype == "float64" else torch.float32
         self.net = PuglieseNet(signed_matrix(c), params, cell_type=c.cell_type, device=device, surrogate=True,
                                gain_rows=leg_motors if cfg.motor_synapse_gains else None,
-                               edge_gains=cfg.all_synapse_gains)
+                               edge_gains=cfg.all_synapse_gains, dtype=self.net_dtype)
         self.n = c.n
         gen = torch.Generator().manual_seed(cfg.seed)
 
@@ -129,12 +135,12 @@ class ConnectomePolicy(nn.Module):
             self.register_buffer("halt_neurons", halt)
             self.halt_w = nn.Parameter((cfg.enc_std * torch.randn(len(halt), 3, generator=gen)).to(device))
             offset = cfg.prop_offset if cfg.haltere_offset is None else cfg.haltere_offset
-            self.halt_b = nn.Parameter((theta0[halt, 0] + offset).detach().clone())
+            self.halt_b = nn.Parameter((theta0[halt, 0] + offset).detach().clone().float())
 
         # Tônus de repouso dos neurônios motores das patas (corrente constante treinável).
         motors = torch.as_tensor(np.concatenate([c.groups[f"motor_{leg}"] for leg in LEGS]), dtype=torch.long, device=device)
         self.register_buffer("motors", motors)
-        self.motor_bias = nn.Parameter((theta0[motors, 0] + cfg.motor_tone).detach().clone())
+        self.motor_bias = nn.Parameter((theta0[motors, 0] + cfg.motor_tone).detach().clone().float())
 
         # Comando de velocidade nos dois DNg100.
         dng100 = np.concatenate([c.groups["DNg100_L"], c.groups["DNg100_R"]])
@@ -202,7 +208,11 @@ class ConnectomePolicy(nn.Module):
         return self.log_std.device
 
     def initial_state(self, batch: int) -> torch.Tensor:
-        return torch.zeros(self.n, batch, device=self.device)
+        return torch.zeros(self.n, batch, device=self.device, dtype=self.net_dtype)
+
+    def step_net(self, r: torch.Tensor, current: torch.Tensor) -> torch.Tensor:
+        """Avança a rede um passo de controle com a corrente externa (N, lote) dada."""
+        return self.net(r, current.to(r.dtype), dt=self.cfg.control_dt, substeps=self.cfg.substeps)
 
     def currents(self, obs: torch.Tensor, v_cmd: torch.Tensor) -> torch.Tensor:
         """Corrente externa (N, lote) a partir da observação crua do ambiente (lote, obs) e do comando."""
@@ -226,7 +236,7 @@ class ConnectomePolicy(nn.Module):
     def decode(self, r: torch.Tensor) -> torch.Tensor:
         """Ação média (lote, n_out) a partir das taxas (N, lote)."""
         weight = torch.where(self.dec_free, self.cfg.dec_gain * self.dec_raw, self.dec_sign * self.dec_raw.exp())
-        contrib = weight[:, None] * r[self.dec_motor]
+        contrib = weight[:, None] * r[self.dec_motor].float()
         out = torch.zeros(self.n_out, r.shape[1], device=self.device).index_add(0, self.dec_out, contrib)
         return out.T + self.dec_bias
 
@@ -237,10 +247,10 @@ class ConnectomePolicy(nn.Module):
         r = self.initial_state(batch)
         v = torch.full((batch,), float(v_cmd), device=self.device)
         for _ in range(round(seconds / self.cfg.control_dt)):
-            r = self.net(r, self.currents(obs_rest, v), dt=self.cfg.control_dt, substeps=self.cfg.substeps)
+            r = self.step_net(r, self.currents(obs_rest, v))
         self.dec_bias -= self.decode(r).mean(dim=0)
 
     def forward(self, r: torch.Tensor, obs: torch.Tensor, v_cmd: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Um passo de controle: devolve o novo estado (N, lote) e a ação média (lote, 42)."""
-        r = self.net(r, self.currents(obs, v_cmd), dt=self.cfg.control_dt, substeps=self.cfg.substeps)
+        r = self.step_net(r, self.currents(obs, v_cmd))
         return r, self.decode(r)

@@ -134,6 +134,8 @@ def parse_args() -> argparse.Namespace:
                         "para 20 e os DNa01/DNa02, de limiar 90 a 200, pararam de disparar)")
     p.add_argument("--cmd-lr-mult", type=float, default=10.0, help="taxa dos ganhos de comando (0 = fixos)")
     p.add_argument("--turn-cells", default="DNa01,DNa02", help="descendentes que recebem o comando de giro")
+    p.add_argument("--net-dtype", choices=("float32", "float64"), default="float32",
+                   help="precisão da rede (float64: a re-execução reproduz a coleta; ver ControllerConfig)")
     p.add_argument("--mirror", action="store_true",
                    help="metade dos trechos de treino espelhados esquerda-direita (a marcha sai simétrica)")
     p.add_argument("--haltere-scale", type=float, default=2.0, help="rad/s por unidade na entrada dos halteres")
@@ -221,7 +223,7 @@ def rollout(env, pol, teacher, refs, v_cmd, yaw, driver_teacher, chunk, device, 
     obs_buf = np.zeros((T, n, 186), np.float32)
     tgt_buf = np.zeros((T, n, pol.n_out), np.float32)
     valid = np.zeros((T, n), bool)
-    states = torch.zeros(((T + chunk - 1) // chunk, pol.n, n), device=device)
+    states = torch.zeros(((T + chunk - 1) // chunk, pol.n, n), device=device, dtype=pol.initial_state(1).dtype)
     r = pol.initial_state(n)
     vc = to_dev(v_cmd, device)
     start = env.positions()
@@ -273,6 +275,7 @@ def main() -> None:
                                motor_tone=args.motor_tone, dec_gain=args.dec_gain, seed=args.seed, tau_scale=args.tau_scale,
                                haltere_input=args.haltere_input, turn_cells=tuple(args.turn_cells.split(",")),
                                haltere_scale=args.haltere_scale, haltere_offset=args.haltere_offset,
+                               net_dtype=args.net_dtype,
                                motor_synapse_gains=args.motor_synapse_gains, all_synapse_gains=args.all_synapse_gains)
         pol = ConnectomePolicy(graph, cfg, device=device)
     mults = {"rede": 1.0, "codificador": 10.0, "tonus": 3.0, "decodificador": args.dec_lr_mult, "comando": args.cmd_lr_mult,

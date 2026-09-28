@@ -36,7 +36,7 @@ def run_student(env, pol, v_cmd, yaw_cmd, headings, seconds, device, silence=Non
             current = pol.currents(obs, vc)
             if extra_current is not None:
                 current = current + extra_current
-            r = pol.net(r, current, dt=pol.cfg.control_dt, substeps=pol.cfg.substeps)
+            r = pol.step_net(r, current)
             if silence is not None:
                 r[silence] = 0.0
             out = pol.decode(r).cpu().numpy()
