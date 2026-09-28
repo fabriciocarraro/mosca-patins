@@ -49,7 +49,6 @@ from mosca.brain.rate_model import PuglieseNet
 
 N_JOINTS = len(LEG_JOINTS)
 GYRO = slice(171, 174)  # velocidade angular do tórax (rad/s) na observação do ambiente
-GYRO_SCALE = 2.0  # rad/s por unidade na entrada dos halteres
 
 
 @dataclass(frozen=True)
@@ -70,6 +69,8 @@ class ControllerConfig:
     turn_gain: float = 100.0  # corrente nos DNa01/DNa02 do lado da curva por rad/s pedido
     tau_scale: float = 1.0  # multiplica as constantes de tempo sorteadas (τ ~20 ms no modelo de Pugliese)
     haltere_input: bool = False  # sentido de rotação: o giroscópio do tórax entra nos aferentes dos halteres
+    haltere_scale: float = 2.0  # rad/s por unidade na entrada dos halteres
+    haltere_offset: float | None = None  # viés inicial dos halteres em relação ao limiar (padrão: prop_offset)
     turn_cells: tuple[str, ...] = ("DNa01", "DNa02")  # descendentes que recebem o comando de giro
 
 
@@ -127,7 +128,8 @@ class ConnectomePolicy(nn.Module):
             halt = torch.as_tensor(sensory_subclass(c, "haltere"), dtype=torch.long, device=device)
             self.register_buffer("halt_neurons", halt)
             self.halt_w = nn.Parameter((cfg.enc_std * torch.randn(len(halt), 3, generator=gen)).to(device))
-            self.halt_b = nn.Parameter((theta0[halt, 0] + cfg.prop_offset).detach().clone())
+            offset = cfg.prop_offset if cfg.haltere_offset is None else cfg.haltere_offset
+            self.halt_b = nn.Parameter((theta0[halt, 0] + offset).detach().clone())
 
         # Tônus de repouso dos neurônios motores das patas (corrente constante treinável).
         motors = torch.as_tensor(np.concatenate([c.groups[f"motor_{leg}"] for leg in LEGS]), dtype=torch.long, device=device)
@@ -211,7 +213,7 @@ class ConnectomePolicy(nn.Module):
             x = (obs[:, feats] - getattr(self, f"enc_center_{k}")) / getattr(self, f"enc_scale_{k}")
             current = current.index_add(0, neurons, self.enc_w[k] @ x.T + self.enc_b[k][:, None])
         if self.cfg.haltere_input:
-            g = obs[:, GYRO] / GYRO_SCALE
+            g = obs[:, GYRO] / self.cfg.haltere_scale
             current = current.index_add(0, self.halt_neurons, self.halt_w @ g.T + self.halt_b[:, None])
         current = current.index_add(0, self.motors, self.motor_bias[:, None].expand(-1, batch))
         drive = self.log_walk_gain.exp() * v_cmd

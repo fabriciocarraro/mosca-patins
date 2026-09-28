@@ -136,6 +136,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--turn-cells", default="DNa01,DNa02", help="descendentes que recebem o comando de giro")
     p.add_argument("--mirror", action="store_true",
                    help="metade dos trechos de treino espelhados esquerda-direita (a marcha sai simétrica)")
+    p.add_argument("--haltere-scale", type=float, default=2.0, help="rad/s por unidade na entrada dos halteres")
+    p.add_argument("--haltere-offset", type=float, default=None, help="viés inicial dos halteres em relação ao limiar")
+    p.add_argument("--reset-halteres", action="store_true", help="com --init-from, não copia o codificador dos halteres")
     p.add_argument("--haltere-input", action="store_true",
                    help="sentido de rotação: o giroscópio do tórax entra nos aferentes dos halteres (grupo declarado)")
     p.add_argument("--student", choices=("conectoma", "mlp"), default="conectoma")
@@ -269,6 +272,7 @@ def main() -> None:
                                turn_gain=args.turn_gain, enc_std=args.enc_std, prop_offset=args.prop_offset,
                                motor_tone=args.motor_tone, dec_gain=args.dec_gain, seed=args.seed, tau_scale=args.tau_scale,
                                haltere_input=args.haltere_input, turn_cells=tuple(args.turn_cells.split(",")),
+                               haltere_scale=args.haltere_scale, haltere_offset=args.haltere_offset,
                                motor_synapse_gains=args.motor_synapse_gains, all_synapse_gains=args.all_synapse_gains)
         pol = ConnectomePolicy(graph, cfg, device=device)
     mults = {"rede": 1.0, "codificador": 10.0, "tonus": 3.0, "decodificador": args.dec_lr_mult, "comando": args.cmd_lr_mult,
@@ -285,6 +289,8 @@ def main() -> None:
         src = torch.load(args.init_from, weights_only=False, map_location=device)
         own = pol.state_dict()
         fixed = {"net.tau0", "net.a0", "net.theta0", "net.r_max"}  # sorteados a partir da configuração
+        if args.reset_halteres:
+            fixed |= {"halt_w", "halt_b"}
         copied = {k: v for k, v in src["policy"].items() if k in own and own[k].shape == v.shape and k not in fixed}
         own.update(copied)
         pol.load_state_dict(own)

@@ -85,6 +85,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--substeps", type=int, default=2, help="subpassos de RK4 por passo de controle (10 ms)")
     p.add_argument("--all-synapse-gains", action="store_true", help="ganho treinável por ligação (degrau 2)")
     p.add_argument("--haltere-input", action="store_true", help="giroscópio do tórax nos aferentes dos halteres")
+    p.add_argument("--haltere-scale", type=float, default=2.0)
+    p.add_argument("--haltere-offset", type=float, default=None)
+    p.add_argument("--turn-cells", default="DNa01,DNa02")
     p.add_argument("--syn-lr-mult", type=float, default=3.0)
     p.add_argument("--cmd-lr-mult", type=float, default=10.0)
     cc = ControllerConfig()
@@ -158,7 +161,9 @@ def main() -> None:
                                 enc_std=args.enc_std, prop_offset=args.prop_offset, motor_tone=args.motor_tone,
                                 dec_gain=args.dec_gain, init_std=args.init_std, control_dt=env_cfg.control_dt,
                                 substeps=args.substeps, seed=args.seed, tau_scale=args.tau_scale,
-                                all_synapse_gains=args.all_synapse_gains, haltere_input=args.haltere_input)
+                                all_synapse_gains=args.all_synapse_gains, haltere_input=args.haltere_input,
+                                haltere_scale=args.haltere_scale, haltere_offset=args.haltere_offset,
+                                turn_cells=tuple(args.turn_cells.split(",")))
     ppo_cfg = RecurrentPPOConfig(target_kl=args.target_kl, epochs=args.epochs, chunk=args.chunk,
                                  minibatch_chunks=args.minibatch_chunks)
     env = SkateVecEnv(env_cfg)
