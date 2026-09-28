@@ -40,3 +40,14 @@ def test_teacher_walks_in_our_model(speed):
     pos = env.data.xpos[env.thorax]
     assert np.linalg.norm(pos[:2] - ref[500, :2]) < 0.05  # segue a referência a menos de meio milímetro
     assert pos[2] > 0.11 and np.linalg.norm(pos[:2] - start[:2]) > 0.9 * speed
+
+
+@pytest.mark.skipif(not HAS_POLICY, reason="política do flybody não baixada (download_assets.py --walking-policy)")
+def test_torch_teacher_matches_numpy():
+    from mosca.walking.teacher import WalkingTeacher
+
+    rng = np.random.default_rng(0)
+    obs = rng.normal(size=(8, 741)) * 0.1
+    a_np = WalkingTeacher()(obs)
+    a_t = WalkingTeacher().to("cpu")(obs)
+    assert np.abs(a_np - a_t).max() < 1e-3 * max(1.0, np.abs(a_np).max())

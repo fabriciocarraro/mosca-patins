@@ -80,12 +80,40 @@ class WalkingTeacher:
 
     def __call__(self, obs: np.ndarray) -> np.ndarray:
         x = np.atleast_2d(obs)
+        if self._torch is not None:
+            return self._forward_torch(x)
         h = x @ self.w1 + self.b1
         h = (h - h.mean(-1, keepdims=True)) / np.sqrt(h.var(-1, keepdims=True) + 1e-5) * self.ln_scale + self.ln_offset
         h = np.tanh(h)
         for w, b in self.hidden:
             h = _elu(h @ w + b)
         return h @ self.w_loc + self.b_loc
+
+    _torch = None
+
+    def to(self, device) -> "WalkingTeacher":
+        """Passa a rodar em torch (float32) no dispositivo dado; na CPU do Spark, o numpy em
+        float64 levava ~300 ms por passo com 64 moscas."""
+        import torch
+
+        def t(x):
+            return torch.as_tensor(x, dtype=torch.float32, device=device)
+
+        self._torch = {"device": device, "w1": t(self.w1), "b1": t(self.b1), "ln_s": t(self.ln_scale), "ln_o": t(self.ln_offset),
+                       "hidden": [(t(w), t(b)) for w, b in self.hidden], "w_loc": t(self.w_loc), "b_loc": t(self.b_loc)}
+        return self
+
+    def _forward_torch(self, x: np.ndarray) -> np.ndarray:
+        import torch
+
+        p = self._torch
+        with torch.no_grad():
+            h = torch.as_tensor(x, dtype=torch.float32, device=p["device"]) @ p["w1"] + p["b1"]
+            h = torch.nn.functional.layer_norm(h, (h.shape[-1],), eps=1e-5) * p["ln_s"] + p["ln_o"]
+            h = torch.tanh(h)
+            for w, b in p["hidden"]:
+                h = torch.nn.functional.elu(h @ w + b)
+            return (h @ p["w_loc"] + p["b_loc"]).cpu().numpy().astype(np.float64)
 
 
 def _quat_conj_mult(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:

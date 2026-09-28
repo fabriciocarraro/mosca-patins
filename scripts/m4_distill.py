@@ -123,7 +123,7 @@ def main() -> None:
     (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
 
     env = WalkingVecEnv(args.envs, n_threads=args.threads)
-    teacher = WalkingTeacher()
+    teacher = WalkingTeacher().to(device)
     graph = Connectome.load(MALECNS_DIR / "controller_graph_min5.npz")
     cfg = ControllerConfig(body="walk", control_dt=0.002, substeps=1, size_ref=args.size_ref, walk_gain=args.walk_gain,
                            turn_gain=args.turn_gain, enc_std=args.enc_std, prop_offset=args.prop_offset,
