@@ -209,3 +209,42 @@ class WalkingVecEnv:
 
     def close(self) -> None:
         self.pool.shutdown()
+
+
+# Espelho esquerda-direita (aumento de dados da destilação). Nas patas direitas, os eixos das juntas
+# são o espelho dos das esquerdas: o mesmo ângulo absoluto é o mesmo movimento anatômico dos dois
+# lados. Ângulos e comandos vêm relativos à postura mediana de cada pata (STANCE_JOINTS), que não é
+# simétrica; o espelho troca os ângulos absolutos.
+LEG_SWAP = np.array([1, 0, 3, 2, 5, 4])  # na ordem de LEGS
+
+
+def _swap_legs(x: np.ndarray, width: int) -> np.ndarray:
+    return x.reshape(len(x), 6, width)[:, LEG_SWAP].reshape(len(x), 6 * width)
+
+
+_STANCE = np.concatenate([STANCE_JOINTS[leg] for leg in LEGS])
+_STANCE_SHIFT = _swap_legs(_STANCE[None], len(LEG_JOINTS))[0] - _STANCE  # postura da pata espelhada − a própria
+
+
+def mirror_obs(obs: np.ndarray) -> np.ndarray:
+    """Observação do aluno (lote, 186) espelhada: troca as patas (ângulos absolutos) e inverte o que é
+    lateral (gravidade e velocidade em y, rolagem e guinada do giroscópio, giro pedido)."""
+    o = obs.copy()
+    o[:, 0:42] = _swap_legs(obs[:, 0:42], 7) + _STANCE_SHIFT
+    o[:, 42:84] = _swap_legs(obs[:, 42:84], 7)
+    o[:, 84:126] = _swap_legs(obs[:, 84:126], 7)  # zeros na caminhada
+    o[:, 126:168] = _swap_legs(obs[:, 126:168], 7) + _STANCE_SHIFT / ACTION_SCALE
+    o[:, 169] *= -1
+    o[:, [171, 173]] *= -1
+    o[:, 175] *= -1
+    o[:, 177:183] = obs[:, 177:183][:, LEG_SWAP]
+    o[:, 184] *= -1
+    return o
+
+
+def mirror_out(out: np.ndarray) -> np.ndarray:
+    """Saída do aluno (lote, 48) espelhada: troca as patas (servos em ângulo absoluto e adesão)."""
+    o = out.copy()
+    o[:, :42] = _swap_legs(out[:, :42], 7) + _STANCE_SHIFT / ACTION_SCALE
+    o[:, 42:48] = out[:, 42:48][:, LEG_SWAP]
+    return o

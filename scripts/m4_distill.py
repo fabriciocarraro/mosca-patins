@@ -56,7 +56,7 @@ from mosca.env.skate_env import attempt_seed  # noqa: E402
 from mosca.paths import MALECNS_DIR, RUNS  # noqa: E402
 from mosca.walking.student import MLPStudent, MLPStudentConfig, SlowTeacher  # noqa: E402
 from mosca.walking.teacher import FUTURE_STEPS, WalkingTeacher, straight_trajectory  # noqa: E402
-from mosca.walking.vec_env import WalkingVecEnv  # noqa: E402
+from mosca.walking.vec_env import WalkingVecEnv, mirror_obs, mirror_out  # noqa: E402
 
 TEST_COMMANDS = [(v, y) for v in (1.0, 2.0, 3.0) for y in (0.0, 1.0, -1.0)]
 
@@ -130,6 +130,8 @@ def parse_args() -> argparse.Namespace:
                    help="com --init-from, volta o ganho de giro ao de --turn-gain (no anda_r5L ele caiu de 100 "
                         "para 20 e os DNa01/DNa02, de limiar 90 a 200, pararam de disparar)")
     p.add_argument("--cmd-lr-mult", type=float, default=10.0, help="taxa dos ganhos de comando (0 = fixos)")
+    p.add_argument("--mirror", action="store_true",
+                   help="metade dos trechos de treino espelhados esquerda-direita (a marcha sai simétrica)")
     p.add_argument("--haltere-input", action="store_true",
                    help="sentido de rotação: o giroscópio do tórax entra nos aferentes dos halteres (grupo declarado)")
     p.add_argument("--student", choices=("conectoma", "mlp"), default="conectoma")
@@ -343,13 +345,16 @@ def main() -> None:
         for u in range(args.updates):
             pick = [segs[j] for j in rng.choice(len(segs), size=min(args.minibatch_chunks, len(segs)), replace=False)]
             r = torch.stack([buffer[b]["states"][k][:, i] for b, k, i in pick], dim=1)
+            flip = rng.random(len(pick)) < 0.5 if args.mirror else np.zeros(len(pick), bool)
             loss_sum, loss_f_sum, count = 0.0, 0.0, 0.0
             out_f = tgt_f = None  # comandos do aluno e da professora depois do filtro dos atuadores
             for t in range(args.chunk):
                 obs_t = np.stack([buffer[b]["obs"][min(k * args.chunk + t, len(buffer[b]["obs"]) - 1), i] for b, k, i in pick])
                 v_t = to_dev([buffer[b]["v_cmd"][i] for b, k, i in pick], device)
-                tgt_t = to_dev(np.stack([buffer[b]["tgt"][min(k * args.chunk + t, len(buffer[b]["tgt"]) - 1), i]
-                                         for b, k, i in pick]), device)
+                tgt_np = np.stack([buffer[b]["tgt"][min(k * args.chunk + t, len(buffer[b]["tgt"]) - 1), i] for b, k, i in pick])
+                if flip.any():  # espelhados: o estado inicial da rede é o do trecho original (o aquecimento o renova)
+                    obs_t[flip], tgt_np[flip] = mirror_obs(obs_t[flip]), mirror_out(tgt_np[flip])
+                tgt_t = to_dev(tgt_np, device)
                 with torch.set_grad_enabled(t >= args.burn_in):
                     r, out = pol(r, to_dev(obs_t, device), v_t)
                     out_f = out if out_f is None else out_f + alpha * (out - out_f)
