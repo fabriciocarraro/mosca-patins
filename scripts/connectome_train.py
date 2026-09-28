@@ -244,9 +244,28 @@ def main() -> None:
                     "env_cfg": asdict(env_cfg), "controller": asdict(ctrl_cfg), "args": vars(args)}, tmp)
         tmp.replace(path)
 
-    # Âncora: os parâmetros do ator na partida (o conectoma que anda), fora a exploração.
-    anchor_ref = [(p, p.detach().clone()) for name, ps in pol.param_groups().items() if name != "exploracao"
-                  for p in ps] if args.anchor > 0 else None
+    # Âncora: os parâmetros do ator na partida (o conectoma que anda), fora a exploração. Ficam em
+    # anchor.pt para a retomada; execuções sem o arquivo refazem a partida (checkpoint + calibração).
+    anchor_ref = None
+    if args.anchor > 0:
+        anchor_path = run_dir / "anchor.pt"
+        if not (args.resume and latest.exists()):
+            start = {k: v.detach().clone() for k, v in pol.named_parameters()}
+            torch.save(start, anchor_path)
+        elif anchor_path.exists():
+            start = torch.load(anchor_path, map_location=device, weights_only=True)
+        else:
+            ref = ConnectomePolicy(graph, ctrl_cfg, device=device)
+            if args.init_from:
+                load_walking(ref, args.init_from, device)
+            obs_rest, _ = env.reset(np.arange(env.n) + 10**8, np.full(env.n, args.v_start))
+            ref.calibrate_rest(to_dev(obs_rest[:8], device), 0.65 * args.v_start)
+            start = {k: v.detach().clone() for k, v in ref.named_parameters()}
+            del ref
+            torch.save(start, anchor_path)
+            print("âncora refeita a partir do checkpoint de partida")
+        explore = {id(p) for p in pol.param_groups()["exploracao"]}
+        anchor_ref = [(p, start[k]) for k, p in pol.named_parameters() if id(p) not in explore]
     n, horizon, chunk = env.n, env.max_steps, ppo_cfg.chunk
     print(f"conectoma: {graph.n:,} neurônios, {sum(p.numel() for p in pol.parameters()):,} parâmetros treináveis; "
           f"dispositivo {device}")
