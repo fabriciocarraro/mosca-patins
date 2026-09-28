@@ -12,7 +12,9 @@ aos atuadores. Ela parte da destilação da política do flybody (m4_distill.py 
 currículo de latência: o atraso e o filtro começam nos da destilação e sobem uma fração
 `--latency-step` dos valores finais (`--delay-ms`, `--tau-ms`) a cada iteração em que
 `--latency-success` das tentativas termina sem queda e a velocidade média passa de
-`--latency-speed` da pedida (parada não conta). (A MLP destilada direto com 20 ms de
+`--latency-speed` da pedida (parada não conta). O critério usa `--probe-envs` moscas que agem
+sem ruído de exploração (e ficam fora do PPO): com o ruído, as quedas vêm da exploração, não
+da latência. (A MLP destilada direto com 20 ms de
 atraso e 20 ms de filtro cai em 0,1 s; a destilada sem latência anda.) Depois, o conectoma
 aprende com ela.
 
@@ -65,6 +67,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--latency-step", type=float, default=0.05)
     p.add_argument("--latency-success", type=float, default=0.8, help="fração mínima de tentativas sem queda")
     p.add_argument("--latency-speed", type=float, default=0.6, help="velocidade média mínima, em fração da pedida")
+    p.add_argument("--probe-envs", type=int, default=8,
+                   help="moscas que agem sem ruído a cada iteração (fora do PPO); o currículo de latência olha só para elas")
     p.add_argument("--init-std", type=float, default=0.3)
     p.add_argument("--noise-tau", type=float, default=0.02, help="s; ruído de exploração correlacionado")
     p.add_argument("--action-clip", type=float, default=20.0, help="os alvos da professora do flybody vão a ~±10 (os atuadores cortam no próprio limite)")
@@ -231,6 +235,8 @@ def main() -> None:
         yaw = np.where(rng.random(n) < 0.5, 0.0, rng.uniform(-args.yaw_max, args.yaw_max, n))
         obs = walker.reset(v_cmd, yaw, args.episode_seconds, rng.uniform(-np.pi, np.pi, n))
         priv = walker.privileged()
+        probe = np.arange(n) >= n - args.probe_envs
+        probe_t = torch.from_numpy(probe)
         gen = torch.Generator().manual_seed(attempt_seed(args.seed, -1 - it))
         buf = {k: np.zeros((horizon, n, d), np.float32) for k, d in
                (("obs", N_FEATURES), ("priv", walker.priv_dim), ("act", N_OUT), ("mean", N_OUT))}
@@ -253,11 +259,12 @@ def main() -> None:
                 if t > 0:
                     noise = beta * noise + np.sqrt(1 - beta**2) * torch.randn((n, N_OUT), generator=gen)
                 action = dist.mean + dist.stddev * noise
+                action[probe_t] = dist.mean[probe_t]
                 buf["logp"][t] = dist.log_prob(action).sum(-1).numpy()
                 buf["val"][t] = ac.value(ot, pt).numpy()
             buf["obs"][t], buf["priv"][t] = obs, pr
             buf["act"][t], buf["mean"][t] = action.numpy(), dist.mean.numpy()
-            buf["valid"][t] = valid
+            buf["valid"][t] = valid & ~probe
             raw_priv.append(priv[valid])
             obs, priv, reward, term, trunc = walker.step(np.clip(action.numpy(), -args.action_clip, args.action_clip))
             buf["rew"][t] = reward * ppo_cfg.reward_scale
@@ -286,15 +293,17 @@ def main() -> None:
             state["lr"] = ppo_cfg.lr
         e = walker.env
         speed = walker.v_sum / np.maximum(e.t, 1)
-        survived = float(np.mean(~e.fell))
-        if not warmup and survived >= args.latency_success and np.mean(speed / v_cmd) >= args.latency_speed:
+        survived = float(np.mean(~e.fell[probe])) if probe.any() else float(np.mean(~e.fell))
+        probe_speed = float(np.mean(speed[probe] / v_cmd[probe])) if probe.any() else float(np.mean(speed / v_cmd))
+        if not warmup and survived >= args.latency_success and probe_speed >= args.latency_speed:
             state["latency_level"] = min(1.0, state["latency_level"] + args.latency_step)
         state["it"] = it + 1
         state["total_steps"] += int(mask.sum())
         state["attempts"] += n
         metrics = {"it": it, "return": float(walker.ret.mean()), "seconds": float((e.t * DT).mean()),
                    "fell": float(e.fell.mean()), "speed_ratio": float(np.mean(speed / v_cmd)), "lr": state["lr"],
-                   "delay_ms": 2.0 * lat_steps, "tau_ms": 1000.0 * lat_tau,
+                   "delay_ms": 2.0 * lat_steps, "tau_ms": 1000.0 * lat_tau, "probe_survived": survived,
+                   "probe_speed_ratio": probe_speed,
                    "std": float(ac.log_std.detach().exp().mean()), "warmup": warmup, "time": time.perf_counter() - t0, **stats}
         if args.eval_every and (it + 1) % args.eval_every == 0:
             ev = evaluate()
