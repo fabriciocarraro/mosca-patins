@@ -43,19 +43,20 @@ def features(obs: np.ndarray, v_cmd: np.ndarray) -> np.ndarray:
 
 
 class OutputLatency:
-    """Atraso (em passos de controle) e filtro de primeira ordem nas saídas de uma política, por
-    ambiente: y(t) = filtro(u(t − atraso)). Imita a lentidão de uma rede de neurônios de taxa. O
-    atraso e o filtro podem mudar entre tentativas (`set`), até `max_delay` passos."""
+    """Atraso (em passos de controle, fracionário) e filtro de primeira ordem nas saídas de uma
+    política, por ambiente: y(t) = filtro(u(t − atraso)), com interpolação linear entre passos.
+    Imita a lentidão de uma rede de neurônios de taxa. O atraso e o filtro podem mudar entre
+    tentativas (`set`), até `max_delay` passos."""
 
-    def __init__(self, n_envs: int, n_out: int, max_delay: int, dt: float = 0.002):
+    def __init__(self, n_envs: int, n_out: int, max_delay: float, dt: float = 0.002):
         self.dt = dt
-        self.hist = np.zeros((max_delay + 1, n_envs, n_out))  # últimos comandos, em anel
+        self.hist = np.zeros((int(np.ceil(max_delay)) + 2, n_envs, n_out))  # últimos comandos, em anel
         self.y = np.zeros((n_envs, n_out))
         self.t = 0
         self.set(max_delay, 0.0)
 
-    def set(self, delay_steps: int, tau: float) -> None:
-        assert 0 <= delay_steps < len(self.hist)
+    def set(self, delay_steps: float, tau: float) -> None:
+        assert 0 <= delay_steps <= len(self.hist) - 2
         self.delay, self.tau = delay_steps, tau
         self.alpha = self.dt / tau if tau > self.dt else 1.0
 
@@ -67,7 +68,11 @@ class OutputLatency:
     def __call__(self, u: np.ndarray) -> np.ndarray:
         size = len(self.hist)
         self.hist[self.t % size] = u
-        delayed = self.hist[(self.t - self.delay) % size]
+        k = int(np.floor(self.delay))
+        f = self.delay - k
+        delayed = self.hist[(self.t - k) % size]
+        if f > 0:
+            delayed = (1 - f) * delayed + f * self.hist[(self.t - k - 1) % size]
         self.t += 1
         self.y = self.y + self.alpha * (delayed - self.y)
         return self.y.copy()
@@ -148,7 +153,7 @@ class SlowTeacher:
         self.ac = ActorCritic(N_FEATURES, priv_dim, ck["ac"]["actor.4.weight"].shape[0])
         self.ac.load_state_dict(ck["ac"])
         level = ck["state"]["latency_level"]
-        self.delay_steps = round(level * ck["latency"]["delay_ms"] / 2)
+        self.delay_steps = level * ck["latency"]["delay_ms"] / 2
         self.tau = level * ck["latency"]["tau_ms"] / 1000
         self.lat = OutputLatency(n_envs, self.ac.actor[-1].out_features, self.delay_steps)
         self.lat.set(self.delay_steps, self.tau)

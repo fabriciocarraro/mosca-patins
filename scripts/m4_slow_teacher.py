@@ -148,8 +148,17 @@ class Walker:
 
 
 def load_init(path: str, ac: ActorCritic) -> dict:
-    """Pesos da MLP da destilação (MLPStudent) no ator: mesmas camadas; o viés de saída soma dec_bias."""
+    """Pesos da MLP da destilação (MLPStudent) no ator: mesmas camadas; o viés de saída soma dec_bias.
+    De um checkpoint desta própria professora, copia o ator e o nível de latência."""
     src = torch.load(path, weights_only=False, map_location="cpu")
+    if "ac" in src:
+        actor = {k[len("actor."):]: v for k, v in src["ac"].items() if k.startswith("actor.")}
+        ac.actor.load_state_dict(actor)
+        with torch.no_grad():
+            ac.log_std.copy_(src["ac"]["log_std"])
+        level = src["state"]["latency_level"]
+        return {"from_teacher": path, "lag_steps": level * src["latency"]["delay_ms"] / 2,
+                "tau": level * src["latency"]["tau_ms"] / 1000}
     pol, cfg = src["policy"], src["controller"]
     with torch.no_grad():
         for k in (0, 2, 4):
@@ -171,11 +180,14 @@ def main() -> None:
     if args.init_from and not (args.resume and latest.exists()):
         init_cfg = load_init(args.init_from, ac)
     delay_ms, tau_ms = args.delay_ms, args.tau_ms
-    walker = Walker(args.envs, args.threads, round(delay_ms / 2), args)
-    actor_state = ac.actor.state_dict()
+    walker = Walker(args.envs, args.threads, delay_ms / 2, args)
+    actor_state, log_std = ac.actor.state_dict(), ac.log_std.detach().clone()
     ac = ActorCritic(N_FEATURES, walker.priv_dim, N_OUT, init_std=args.init_std)
     if init_cfg:
         ac.actor.load_state_dict(actor_state)
+        if "from_teacher" in init_cfg:  # continua com a exploração em que a outra execução parou
+            with torch.no_grad():
+                ac.log_std.copy_(log_std)
     ppo_cfg = PPOConfig(gamma=args.gamma, lam=args.lam, target_kl=args.target_kl, lr=args.lr, reward_scale=args.reward_scale)
     opt = torch.optim.Adam(ac.parameters(), lr=ppo_cfg.lr)
     norm_priv = RunningNorm(walker.priv_dim)
@@ -201,9 +213,9 @@ def main() -> None:
                     "latency": {"delay_ms": delay_ms, "tau_ms": tau_ms}, "args": vars(args)}, tmp)
         tmp.replace(path)
 
-    def set_latency() -> tuple[int, float]:
+    def set_latency() -> tuple[float, float]:
         level = state["latency_level"]
-        steps, tau = round(level * delay_ms / 2), level * tau_ms / 1000
+        steps, tau = level * delay_ms / 2, level * tau_ms / 1000
         walker.lat.set(steps, tau)
         return steps, tau
 
@@ -313,7 +325,7 @@ def main() -> None:
                   f"velocidade/pedida {ev['eval_speed_ratio']:.2f}", flush=True)
         with open(run_dir / "metrics.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(metrics) + "\n")
-        print(f"{it:4d} {2 * lat_steps:6.0f} / {1000 * lat_tau:4.1f} {metrics['return']:8.1f} {metrics['seconds']:6.2f} "
+        print(f"{it:4d} {2 * lat_steps:6.1f} / {1000 * lat_tau:4.1f} {metrics['return']:8.1f} {metrics['seconds']:6.2f} "
               f"{100 * metrics['fell']:5.1f} "
               f"{metrics['speed_ratio']:11.2f} {state['lr']:.1e} {stats['kl_final']:.4f} {stats['epochs']:2d} "
               f"{metrics['time']:5.1f}{' (crítico)' if warmup else ''}", flush=True)
