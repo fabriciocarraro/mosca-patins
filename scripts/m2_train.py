@@ -66,6 +66,8 @@ def parse_args() -> argparse.Namespace:
                    help="giro máximo pedido no fim do currículo (rad/s; 0 = só retas). A faixa de giro abre "
                         "de --yaw-step em --yaw-step quando a velocidade já chegou a --v-final")
     p.add_argument("--yaw-step", type=float, default=0.25)
+    p.add_argument("--yaw-filtered", action="store_true",
+                   help="recompensa de giro pelo giro médio de 200 ms (o instantâneo inclui o balanço do corpo)")
     p.add_argument("--yaw-start", type=float, default=0.0, help="giro máximo no começo (rad/s)")
     p.add_argument("--yaw-switch", type=float, default=1.5, help="duração média de cada trecho de giro (s)")
     p.add_argument("--yaw-tol", type=float, default=0.5, help="erro médio de giro para a tentativa contar (rad/s)")
@@ -116,7 +118,8 @@ def main() -> None:
     (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
 
     reward_cfg = RewardConfig(**{name: getattr(args, name) for name in REWARD_FLAGS},
-                              vel_shape=args.vel_shape, roll_gated=args.roll_gated == "yes")
+                              vel_shape=args.vel_shape, roll_gated=args.roll_gated == "yes",
+                              yaw_filtered=args.yaw_filtered)
     env_cfg = EnvConfig(n_envs=args.envs, n_threads=args.threads, control_dt=args.control_dt,
                         episode_seconds=args.episode_seconds, action_scale=args.action_scale,
                         action_clip=args.action_clip, seed=args.seed, reward=reward_cfg)

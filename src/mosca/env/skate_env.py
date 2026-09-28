@@ -56,6 +56,9 @@ class RewardConfig:
     w_leg_floor: float = 0.1  # por segmento de pata encostado no chão
     w_contact: float = 0.0  # fração dos 6 patins apoiados (desestimula levantar os patins para dar passos)
     ema_tau: float = 0.2  # s, média móvel da velocidade usada na recompensa
+    # Giro da recompensa pela média móvel de ema_tau, como a velocidade. O instantâneo é dominado pelo
+    # balanço do corpo: com o ruído de exploração, ~3,8 rad/s em média com giro médio de ~0,2 rad/s.
+    yaw_filtered: bool = False
 
 
 @dataclass(frozen=True)
@@ -171,6 +174,7 @@ class SkateVecEnv:
         self.v_cmd = np.zeros(self.n)
         self.yaw_cmd = np.zeros(self.n)
         self.ema_v = np.zeros(self.n)
+        self.ema_yaw = np.zeros(self.n)
         self.prev_action = np.zeros((self.n, self.act_dim))
         self.steps = np.zeros(self.n, dtype=int)
         self.alive = np.zeros(self.n, dtype=bool)
@@ -196,10 +200,12 @@ class SkateVecEnv:
             self.stats[i] = {"attempt": int(attempt), "v_cmd": float(v_cmd[i]), "push": float(push[i]),
                              "distance": 0.0, "rolled": 0.0, "moved": 0.0, "glide_steps": 0,
                              "return": 0.0, "fell": False, "leg_floor": 0, "work": 0.0, "grounded": 0.0,
-                             "yaw_cmd": 0.0 if yaw_cmd is None else float(yaw_cmd[i]), "yaw_sum": 0.0, "yaw_err": 0.0}
+                             "yaw_cmd": 0.0 if yaw_cmd is None else float(yaw_cmd[i]), "yaw_sum": 0.0, "yaw_err": 0.0,
+                             "yaw_abs": 0.0}
         self.v_cmd[:] = v_cmd
         self.yaw_cmd[:] = 0.0 if yaw_cmd is None else yaw_cmd
         self.ema_v[:] = push
+        self.ema_yaw[:] = 0.0
         self.prev_action[:] = 0.0
         self.steps[:] = 0
         self.alive[:] = True
@@ -269,6 +275,7 @@ class SkateVecEnv:
         up_z = float(rot[2, 2])
         if update:
             self.ema_v[i] += (cfg.control_dt / rw.ema_tau) * (v_fwd - self.ema_v[i])
+            self.ema_yaw[i] += (cfg.control_dt / rw.ema_tau) * (yaw_rate - self.ema_yaw[i])
 
         loads = d.sensordata[self.touch] / self.weight
         along = np.zeros(len(LEGS))
@@ -300,7 +307,8 @@ class SkateVecEnv:
         else:
             sigma_vel = rw.sigma_vel + rw.sigma_vel_rel * self.v_cmd[i]
             r_vel = np.exp(-(((self.ema_v[i] - self.v_cmd[i]) / sigma_vel) ** 2))
-        r_yaw = np.exp(-(((yaw_rate - self.yaw_cmd[i]) / rw.sigma_yaw) ** 2))
+        yaw_used = self.ema_yaw[i] if rw.yaw_filtered else yaw_rate
+        r_yaw = np.exp(-(((yaw_used - self.yaw_cmd[i]) / rw.sigma_yaw) ** 2))
         r_up = max(up_z, 0.0)
         if grounded.any() and self.v_cmd[i] >= 0.5:
             r_roll = float(np.mean(np.exp(-(((along[grounded] - v_fwd) / rw.sigma_roll) ** 2))))
@@ -324,7 +332,8 @@ class SkateVecEnv:
             s["work"] += power * cfg.control_dt
             s["grounded"] += contact
             s["yaw_sum"] += yaw_rate * cfg.control_dt
-            s["yaw_err"] += abs(yaw_rate - self.yaw_cmd[i]) * cfg.control_dt
+            s["yaw_err"] += abs(self.ema_yaw[i] - self.yaw_cmd[i]) * cfg.control_dt
+            s["yaw_abs"] += abs(yaw_rate) * cfg.control_dt
             if grounded.any():
                 speed = abs(v_fwd)
                 s["rolled"] += float(np.minimum(np.abs(along[grounded]), 1.2 * speed).sum())
@@ -355,7 +364,8 @@ class SkateVecEnv:
             s["glide_frac"] = s["glide_steps"] / steps
             s["grounded_frac"] = s["grounded"] / steps
             s["yaw_rate"] = s["yaw_sum"] / s["seconds"]  # giro médio (rad/s)
-            s["yaw_error"] = s["yaw_err"] / s["seconds"]  # erro médio de giro em relação ao pedido (rad/s)
+            s["yaw_error"] = s["yaw_err"] / s["seconds"]  # erro médio do giro filtrado (ema_tau) em relação ao pedido
+            s["yaw_abs_rate"] = s["yaw_abs"] / s["seconds"]  # |giro| instantâneo médio (inclui o balanço)
             s["cot"] = s["work"] / (self.weight * abs(s["distance"])) if abs(s["distance"]) > 1e-3 else float("nan")
             out.append(s)
         return out
