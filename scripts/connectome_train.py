@@ -40,7 +40,7 @@ from torch.distributions import Normal
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from mosca.brain.controller import ConnectomePolicy, ControllerConfig  # noqa: E402
-from mosca.capture import Recorder, library_versions  # noqa: E402
+from mosca.capture import ColoredNoise, Recorder, library_versions, noise_beta  # noqa: E402
 from mosca.brain.graph import Connectome  # noqa: E402
 from mosca.env.skate_env import EnvConfig, RewardConfig, SkateVecEnv, attempt_seed  # noqa: E402
 from mosca.paths import MALECNS_DIR, RUNS  # noqa: E402
@@ -99,6 +99,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--turn-cells", default="DNa01,DNa02")
     p.add_argument("--net-dtype", choices=("float32", "float64"), default="float32",
                    help="precisão da rede (float64: a atualização re-executa a mesma política da coleta)")
+    p.add_argument("--deterministic", action="store_true",
+                   help="controlador determinístico (exige --net-dtype float64): a re-simulação do cérebro "
+                        "reproduz as ações gravadas (M5); use com --capture")
     p.add_argument("--syn-lr-mult", type=float, default=3.0)
     p.add_argument("--lr", type=float, default=3e-4, help="taxa-base inicial do ator (ajustada pela KL)")
     p.add_argument("--mults", default="", help='multiplicadores por grupo, "rede=0.85,decodificador=1.8,..." '
@@ -177,7 +180,8 @@ def main() -> None:
                                 substeps=args.substeps, seed=args.seed, tau_scale=args.tau_scale,
                                 all_synapse_gains=args.all_synapse_gains, haltere_input=args.haltere_input,
                                 haltere_scale=args.haltere_scale, haltere_offset=args.haltere_offset,
-                                turn_cells=tuple(args.turn_cells.split(",")), net_dtype=args.net_dtype)
+                                turn_cells=tuple(args.turn_cells.split(",")), net_dtype=args.net_dtype,
+                                deterministic=args.deterministic)
     ppo_cfg = RecurrentPPOConfig(target_kl=args.target_kl, epochs=args.epochs, chunk=args.chunk, lr=args.lr,
                                  gamma=args.gamma, lam=args.lam, lr_min=args.lr_min,
                                  minibatch_chunks=args.minibatch_chunks)
@@ -198,7 +202,7 @@ def main() -> None:
     opt = torch.optim.Adam(groups + [{"params": critic.parameters(), "lr": args.critic_lr, "name": "critic"}])
     norm_obs, norm_priv = RunningNorm(env.obs_dim), RunningNorm(env.priv_dim)
     state = {"it": 0, "v_max": args.v_start, "lr": ppo_cfg.lr, "total_steps": 0, "attempts": 0}
-    beta = float(np.exp(-env_cfg.control_dt / args.noise_tau)) if args.noise_tau > 0 else 0.0
+    beta = noise_beta(env_cfg.control_dt, args.noise_tau)
 
     latest = run_dir / "latest.pt"
     if args.resume and latest.exists():
@@ -234,6 +238,8 @@ def main() -> None:
     n, horizon, chunk = env.n, env.max_steps, ppo_cfg.chunk
     print(f"conectoma: {graph.n:,} neurônios, {sum(p.numel() for p in pol.parameters()):,} parâmetros treináveis; "
           f"dispositivo {device}")
+    if args.deterministic:
+        print(f"controlador determinístico: folga da soma exata {pol.net.exact_margin():.1f}x")
     print("  it   passos  retorno  dur(s) queda%  vel   rol  desliza v_max sucesso    lr  kl_fim ép coleta atualiza")
     for it in range(state["it"], args.iters):
         t0 = time.perf_counter()
@@ -244,7 +250,7 @@ def main() -> None:
         p_push = max(0.0, 0.5 * (1 - it / args.push_iters)) if args.push_iters > 0 else 0.0
         push = np.where(rng.random(n) < p_push, v_cmd, 0.0)
         obs, priv = env.reset(attempts, v_cmd, push)
-        gen = torch.Generator().manual_seed(attempt_seed(args.seed, -1 - it))
+        noise_src = ColoredNoise(attempt_seed(args.seed, -1 - it), (n, env.act_dim), beta, device)
         recorder = Recorder(env, it, attempts, v_cmd, push) if args.capture else None
         if args.capture:  # versão da política desta coleta (antes da atualização)
             torch.save(pol.state_dict(), run_dir / "capture" / f"policy_it{it:05d}.pt")
@@ -265,7 +271,6 @@ def main() -> None:
         log_std = pol.log_std.detach().clone()
         vc = to_dev(v_cmd, device)
         r = pol.initial_state(n)
-        noise = torch.randn((n, A), generator=gen).to(device)
         steps = 0
         activity = []  # (fração de neurônios ativos, taxa média dos motores) a cada 50 passos
         with torch.no_grad():
@@ -280,8 +285,7 @@ def main() -> None:
                 if t % 50 == 0:
                     live = torch.as_tensor(alive, device=device)
                     activity.append(((r[:, live] > 0.01).float().mean().item(), r[pol.motors][:, live].mean().item()))
-                if t > 0:  # ruído correlacionado, variância 1 mantida
-                    noise = beta * noise + np.sqrt(1 - beta**2) * torch.randn((n, A), generator=gen).to(device)
+                noise = noise_src.step()  # ruído correlacionado, variância 1 mantida
                 std = log_std.exp()
                 action = mean + std * noise
                 buf["logp"][t] = Normal(mean, std.expand_as(mean)).log_prob(action).sum(-1)
@@ -301,6 +305,7 @@ def main() -> None:
                 steps = t + 1
             last_val = critic(to_dev(norm_obs(last_obs), device), to_dev(norm_priv(last_priv), device)).cpu().numpy()
         t_collect = time.perf_counter() - t0
+        gen = noise_src.generator  # o mesmo gerador sorteia os minilotes da atualização
         if recorder is not None:
             recorder.finish().save(run_dir / "capture" / f"it{it:05d}.npz")
 

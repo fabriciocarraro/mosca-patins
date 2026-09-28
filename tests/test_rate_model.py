@@ -114,3 +114,31 @@ def test_edge_gains_match_plain_net_and_gradcheck():
     x = torch.rand(w.shape[0], 2, dtype=torch.float64, requires_grad=True)
     g = (0.1 * torch.randn(w.nnz, dtype=torch.float64)).requires_grad_(True)
     assert torch.autograd.gradcheck(lambda gg, xx: _GainedSpMM.apply(gg, gained, xx), (g, x), eps=1e-6, atol=1e-5)
+
+
+def test_exact_mode_sums_do_not_depend_on_order_or_batch():
+    from mosca.brain.rate_model import R_BITS, W_BITS, _GainedSpMM, _on_grid
+
+    w, params = _random_net(n=80, seed=3)
+    net = PuglieseNet(w, params, dtype=torch.float64, edge_gains=True, exact=True)
+    gen = torch.Generator().manual_seed(0)
+    with torch.no_grad():
+        net.log_edge_gain.copy_(0.3 * torch.randn(w.nnz, generator=gen, dtype=torch.float64))
+    assert net.exact_margin() > 1
+    x = 300.0 * torch.rand(80, 6, generator=gen, dtype=torch.float64)
+    y = _GainedSpMM.apply(net.log_edge_gain, net, _on_grid(x, R_BITS)).detach().numpy()
+    # a mesma conta somando em outra ordem (coluna a coluna, pelo scipy) dá o mesmo resultado, bit a bit
+    values = _on_grid(net.edge_base * net.log_edge_gain.exp(), W_BITS).detach().numpy()
+    m = sp.csr_matrix((values, net.edge_col.numpy(), net.edge_crow.numpy()), shape=net.edge_shape)
+    assert np.array_equal(y, m.tocsc() @ _on_grid(x, R_BITS).numpy())
+    # lote 1 igual à coluna do lote 6
+    y1 = _GainedSpMM.apply(net.log_edge_gain, net, _on_grid(x[:, 2:3], R_BITS)).detach().numpy()
+    assert np.array_equal(y1[:, 0], y[:, 2])
+    # o gradiente passa pelo arredondamento
+    r = torch.zeros(80, 2, dtype=torch.float64)
+    current = torch.zeros(80, 2, dtype=torch.float64)
+    current[:5] = 300.0
+    for _ in range(10):
+        r = net(r, current, dt=2e-3)
+    r[10:20].sum().backward()
+    assert net.log_edge_gain.grad.abs().sum() > 0

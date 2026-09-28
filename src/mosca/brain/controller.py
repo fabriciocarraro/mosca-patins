@@ -77,6 +77,12 @@ class ControllerConfig:
     # pela rede com neurônios de 5 ms até 0,07 na ação em 16 passos, e o PPO (que re-executa a política na
     # atualização) e a re-simulação da captura deixam de reproduzir a coleta. Em float64, 1e-12.
     net_dtype: str = "float32"
+    # Determinismo (exige float64): somas exatas na multiplicação esparsa (modo exato da rede, ver
+    # mosca.brain.rate_model) e decodificador somando por multiplicação densa, sem atômicas. A mesma
+    # política com as mesmas observações dá as mesmas ações bit a bit, e a re-simulação do cérebro
+    # (M5, mosca.capture.replay_brain) reproduz a coleta. Sem isso, a rede de neurônios rápidos
+    # amplifica diferenças de 1e-12 e a re-simulação de uma tentativa de 5 s diverge.
+    deterministic: bool = False
 
 
 def leg_feature_index(leg: int, act_dim: int = 6 * N_JOINTS) -> np.ndarray:
@@ -105,9 +111,11 @@ class ConnectomePolicy(nn.Module):
             params = replace(params, tau=params.tau * cfg.tau_scale)
         leg_motors = np.concatenate([c.groups[f"motor_{leg}"] for leg in LEGS])
         self.net_dtype = torch.float64 if cfg.net_dtype == "float64" else torch.float32
+        if cfg.deterministic and cfg.net_dtype != "float64":
+            raise ValueError("deterministic=True precisa de net_dtype='float64'")
         self.net = PuglieseNet(signed_matrix(c), params, cell_type=c.cell_type, device=device, surrogate=True,
                                gain_rows=leg_motors if cfg.motor_synapse_gains else None,
-                               edge_gains=cfg.all_synapse_gains, dtype=self.net_dtype)
+                               edge_gains=cfg.all_synapse_gains, dtype=self.net_dtype, exact=cfg.deterministic)
         self.n = c.n
         gen = torch.Generator().manual_seed(cfg.seed)
 
@@ -181,6 +189,10 @@ class ConnectomePolicy(nn.Module):
         self.register_buffer("dec_sign", torch.as_tensor(sign, dtype=torch.float32, device=device))
         free = sign == 0
         self.register_buffer("dec_free", torch.as_tensor(free, device=device))
+        if cfg.deterministic:  # soma por saída como multiplicação densa (o index_add usa atômicas)
+            scatter = torch.zeros(self.n_out, len(out))
+            scatter[torch.as_tensor(out, dtype=torch.long), torch.arange(len(out))] = 1.0
+            self.register_buffer("dec_scatter", scatter.to(device), persistent=False)
         # Ganho ≥ 0 (em log) para músculos identificados; peso livre (qualquer sinal, começa em 0,
         # na escala dec_gain) para os motores sem músculo identificado. Sem a escala, os pesos
         # livres eram 330 vezes mais sensíveis que os ganhos e dominavam a divergência KL do PPO.
@@ -237,7 +249,10 @@ class ConnectomePolicy(nn.Module):
         """Ação média (lote, n_out) a partir das taxas (N, lote)."""
         weight = torch.where(self.dec_free, self.cfg.dec_gain * self.dec_raw, self.dec_sign * self.dec_raw.exp())
         contrib = weight[:, None] * r[self.dec_motor].float()
-        out = torch.zeros(self.n_out, r.shape[1], device=self.device).index_add(0, self.dec_out, contrib)
+        if self.cfg.deterministic:
+            out = self.dec_scatter @ contrib
+        else:
+            out = torch.zeros(self.n_out, r.shape[1], device=self.device).index_add(0, self.dec_out, contrib)
         return out.T + self.dec_bias
 
     @torch.no_grad()

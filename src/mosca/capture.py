@@ -11,7 +11,9 @@ Por iteração do treino grava-se, para cada tentativa da leva:
 A física do MuJoCo é determinística: re-simular uma tentativa com as mesmas ações, sozinha
 num ambiente de lote 1, reproduz os estados gravados bit a bit (teste em
 tests/test_capture.py). A versão da política de cada iteração fica em outro arquivo, para
-re-simular a atividade do cérebro no painel do vídeo.
+re-simular a atividade do cérebro no painel do vídeo (`replay_brain`): a leva inteira é refeita,
+a física com as ações gravadas e o cérebro com as observações que ela produz; com o controlador
+determinístico (ControllerConfig.deterministic), as ações recalculadas saem iguais às gravadas.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from importlib import metadata
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from mosca.env.skate_env import EnvConfig, SkateVecEnv
 
@@ -35,6 +38,30 @@ def library_versions() -> dict[str, str]:
         except metadata.PackageNotFoundError:
             pass
     return out
+
+
+def noise_beta(control_dt: float, noise_tau: float) -> float:
+    """Correlação do ruído de exploração de um passo de controle para o seguinte."""
+    return float(np.exp(-control_dt / noise_tau)) if noise_tau > 0 else 0.0
+
+
+class ColoredNoise:
+    """Ruído de exploração da coleta: Ornstein-Uhlenbeck discreto com variância 1, sorteado por um
+    gerador com a semente da iteração, de modo que a re-simulação refaz a mesma sequência."""
+
+    def __init__(self, seed: int, shape: tuple[int, int], beta: float, device):
+        self.generator = torch.Generator().manual_seed(seed)
+        self.shape, self.beta, self.device = shape, beta, device
+        self.value = torch.randn(shape, generator=self.generator).to(device)
+        self.t = 0
+
+    def step(self) -> torch.Tensor:
+        """Ruído do passo atual (chame uma vez por passo de controle)."""
+        if self.t > 0:
+            self.value = self.beta * self.value + np.sqrt(1 - self.beta**2) * torch.randn(
+                self.shape, generator=self.generator).to(self.device)
+        self.t += 1
+        return self.value
 
 
 @dataclass
@@ -113,3 +140,34 @@ def replay(cap: IterationCapture, index: int, env_cfg: EnvConfig, on_step=None, 
     stats = env.episode_stats()[0]
     env.close()
     return {**stats, "max_deviation": worst}
+
+
+def replay_brain(cap: IterationCapture, env_cfg: EnvConfig, policy, noise_seed: int, beta: float,
+                 on_step=None) -> np.ndarray:
+    """Re-simula a leva inteira da iteração como na coleta: a física segue as ações gravadas e o
+    cérebro (a versão da política usada na coleta) recebe as observações que ela produz, com o mesmo
+    lote. Cada ação é recalculada como na coleta (média + desvio × ruído refeito da semente).
+
+    Devolve, por tentativa, a maior diferença entre a ação recalculada e a gravada enquanto a
+    tentativa estava viva. `on_step(env, t, r, mean)` recebe o estado da rede (N, lote) depois de
+    cada passo de controle (para o painel do cérebro).
+    """
+    env = SkateVecEnv(EnvConfig(**{**env_cfg.__dict__, "n_envs": len(cap.attempts)}))
+    obs, _ = env.reset(cap.attempts, cap.v_cmd, cap.push)
+    device = policy.device
+    noise = ColoredNoise(noise_seed, (env.n, env.act_dim), beta, device)
+    std = policy.log_std.detach().exp()
+    v_cmd = torch.as_tensor(np.asarray(cap.v_cmd), dtype=torch.float32, device=device)
+    r = policy.initial_state(env.n)
+    worst = np.zeros(env.n)
+    with torch.no_grad():
+        for t in range(len(cap.actions)):
+            alive = env.alive.copy()
+            r, mean = policy(r, torch.as_tensor(np.asarray(obs), dtype=torch.float32, device=device), v_cmd)
+            action = (mean + std * noise.step()).cpu().numpy()
+            worst = np.maximum(worst, np.where(alive, np.abs(action - cap.actions[t]).max(axis=1), 0.0))
+            if on_step is not None:
+                on_step(env, t, r, mean)
+            obs, *_ = env.step(cap.actions[t])
+    env.close()
+    return worst
