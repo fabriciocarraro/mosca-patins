@@ -6,10 +6,15 @@ que depende do estado dos atuadores a cada 2 ms). O conectoma (neurônios com τ
 camadas entre os sentidos e os motores) responde em 20 a 40 ms e não tem como imitá-la.
 
 Esta professora vê só o que o conectoma vê (os sentidos das patas e os comandos de velocidade
-e giro), e as suas saídas passam por um atraso e um filtro de primeira ordem (`--delay-ms`,
-`--tau-ms`) antes de chegar aos atuadores. Ela parte da destilação da política do flybody
-(m4_distill.py --student mlp com a mesma latência, `--init-from`) e treina por PPO para andar
-na velocidade e no giro pedidos sem cair. Depois, o conectoma aprende com ela.
+e giro), e as suas saídas passam por um atraso e um filtro de primeira ordem antes de chegar
+aos atuadores. Ela parte da destilação da política do flybody (m4_distill.py --student mlp,
+`--init-from`) e treina por PPO para andar na velocidade e no giro pedidos sem cair, com um
+currículo de latência: o atraso e o filtro começam nos da destilação e sobem uma fração
+`--latency-step` dos valores finais (`--delay-ms`, `--tau-ms`) a cada iteração em que
+`--latency-success` das tentativas termina sem queda e a velocidade média passa de
+`--latency-speed` da pedida (parada não conta). (A MLP destilada direto com 20 ms de
+atraso e 20 ms de filtro cai em 0,1 s; a destilada sem latência anda.) Depois, o conectoma
+aprende com ela.
 
 Recompensa por passo (2 ms): velocidade para a frente (média móvel de 0,1 s) em tenda em torno
 da pedida, giro perto do pedido, tórax em pé e custo pequeno de mudança brusca do comando. A
@@ -55,8 +60,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--v-min", type=float, default=0.5)
     p.add_argument("--v-max", type=float, default=3.0)
     p.add_argument("--yaw-max", type=float, default=1.0)
-    p.add_argument("--delay-ms", type=float, default=None, help="padrão: o do checkpoint de partida")
-    p.add_argument("--tau-ms", type=float, default=None, help="padrão: o do checkpoint de partida")
+    p.add_argument("--delay-ms", type=float, default=20.0, help="atraso final das saídas")
+    p.add_argument("--tau-ms", type=float, default=20.0, help="constante de tempo final do filtro das saídas")
+    p.add_argument("--latency-step", type=float, default=0.05)
+    p.add_argument("--latency-success", type=float, default=0.8, help="fração mínima de tentativas sem queda")
+    p.add_argument("--latency-speed", type=float, default=0.6, help="velocidade média mínima, em fração da pedida")
     p.add_argument("--init-std", type=float, default=0.3)
     p.add_argument("--noise-tau", type=float, default=0.02, help="s; ruído de exploração correlacionado")
     p.add_argument("--action-clip", type=float, default=20.0, help="os alvos da professora do flybody vão a ~±10 (os atuadores cortam no próprio limite)")
@@ -78,9 +86,9 @@ def parse_args() -> argparse.Namespace:
 class Walker:
     """Ambiente de caminhada com a latência da professora, a recompensa e o estado do crítico."""
 
-    def __init__(self, n: int, threads: int, delay_steps: int, tau: float, args):
+    def __init__(self, n: int, threads: int, max_delay_steps: int, args):
         self.env = WalkingVecEnv(n, n_threads=threads)
-        self.lat = OutputLatency(n, N_OUT, delay_steps, tau, DT)
+        self.lat = OutputLatency(n, N_OUT, max_delay_steps, DT)
         self.args = args
         self.n = n
         self.ema_v, self.ret, self.v_sum = np.zeros(n), np.zeros(n), np.zeros(n)
@@ -158,9 +166,8 @@ def main() -> None:
     init_cfg = {}
     if args.init_from and not (args.resume and latest.exists()):
         init_cfg = load_init(args.init_from, ac)
-    delay_ms = args.delay_ms if args.delay_ms is not None else 2.0 * init_cfg.get("lag_steps", 0)
-    tau_ms = args.tau_ms if args.tau_ms is not None else 1000.0 * init_cfg.get("tau", 0.0)
-    walker = Walker(args.envs, args.threads, round(delay_ms / 2), tau_ms / 1000, args)
+    delay_ms, tau_ms = args.delay_ms, args.tau_ms
+    walker = Walker(args.envs, args.threads, round(delay_ms / 2), args)
     actor_state = ac.actor.state_dict()
     ac = ActorCritic(N_FEATURES, walker.priv_dim, N_OUT, init_std=args.init_std)
     if init_cfg:
@@ -168,7 +175,8 @@ def main() -> None:
     ppo_cfg = PPOConfig(gamma=args.gamma, lam=args.lam, target_kl=args.target_kl, lr=args.lr, reward_scale=args.reward_scale)
     opt = torch.optim.Adam(ac.parameters(), lr=ppo_cfg.lr)
     norm_priv = RunningNorm(walker.priv_dim)
-    state = {"it": 0, "lr": ppo_cfg.lr, "total_steps": 0, "attempts": 0}
+    start = 2.0 * init_cfg.get("lag_steps", 0) / delay_ms if delay_ms > 0 else 1.0
+    state = {"it": 0, "lr": ppo_cfg.lr, "total_steps": 0, "attempts": 0, "latency_level": min(1.0, start)}
     if args.resume and latest.exists():
         ckpt = torch.load(latest, weights_only=False)
         ac.load_state_dict(ckpt["ac"])
@@ -189,6 +197,12 @@ def main() -> None:
                     "latency": {"delay_ms": delay_ms, "tau_ms": tau_ms}, "args": vars(args)}, tmp)
         tmp.replace(path)
 
+    def set_latency() -> tuple[int, float]:
+        level = state["latency_level"]
+        steps, tau = round(level * delay_ms / 2), level * tau_ms / 1000
+        walker.lat.set(steps, tau)
+        return steps, tau
+
     def evaluate() -> dict:
         n = walker.n
         cmds = [TEST_COMMANDS[j % len(TEST_COMMANDS)] for j in range(n)]
@@ -208,9 +222,10 @@ def main() -> None:
     horizon = round(args.episode_seconds / DT)
     print(f"professora lenta: atraso {delay_ms:g} ms, filtro {tau_ms:g} ms; {sum(p.numel() for p in ac.actor.parameters()):,} "
           f"parâmetros no ator; crítico vê {walker.priv_dim} grandezas a mais")
-    print("  it  retorno  dur(s) queda%  vel/pedida    lr  kl_fim ép  s/it")
+    print("  it  latência(ms)  retorno  dur(s) queda%  vel/pedida    lr  kl_fim ép  s/it")
     for it in range(state["it"], args.iters):
         t0 = time.perf_counter()
+        lat_steps, lat_tau = set_latency()
         rng = np.random.default_rng(attempt_seed(args.seed, -1 - it))
         v_cmd = rng.uniform(args.v_min, args.v_max, n)
         yaw = np.where(rng.random(n) < 0.5, 0.0, rng.uniform(-args.yaw_max, args.yaw_max, n))
@@ -271,20 +286,26 @@ def main() -> None:
             state["lr"] = ppo_cfg.lr
         e = walker.env
         speed = walker.v_sum / np.maximum(e.t, 1)
+        survived = float(np.mean(~e.fell))
+        if not warmup and survived >= args.latency_success and np.mean(speed / v_cmd) >= args.latency_speed:
+            state["latency_level"] = min(1.0, state["latency_level"] + args.latency_step)
         state["it"] = it + 1
         state["total_steps"] += int(mask.sum())
         state["attempts"] += n
         metrics = {"it": it, "return": float(walker.ret.mean()), "seconds": float((e.t * DT).mean()),
                    "fell": float(e.fell.mean()), "speed_ratio": float(np.mean(speed / v_cmd)), "lr": state["lr"],
+                   "delay_ms": 2.0 * lat_steps, "tau_ms": 1000.0 * lat_tau,
                    "std": float(ac.log_std.detach().exp().mean()), "warmup": warmup, "time": time.perf_counter() - t0, **stats}
         if args.eval_every and (it + 1) % args.eval_every == 0:
             ev = evaluate()
+            set_latency()
             metrics.update(ev)
             print(f"      teste sem ruído ({args.eval_seconds:g} s): {ev['eval_success']:.0%} sem cair até o fim, "
                   f"velocidade/pedida {ev['eval_speed_ratio']:.2f}", flush=True)
         with open(run_dir / "metrics.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(metrics) + "\n")
-        print(f"{it:4d} {metrics['return']:8.1f} {metrics['seconds']:6.2f} {100 * metrics['fell']:5.1f} "
+        print(f"{it:4d} {2 * lat_steps:6.0f} / {1000 * lat_tau:4.1f} {metrics['return']:8.1f} {metrics['seconds']:6.2f} "
+              f"{100 * metrics['fell']:5.1f} "
               f"{metrics['speed_ratio']:11.2f} {state['lr']:.1e} {stats['kl_final']:.4f} {stats['epochs']:2d} "
               f"{metrics['time']:5.1f}{' (crítico)' if warmup else ''}", flush=True)
         save(latest)
