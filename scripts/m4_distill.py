@@ -130,6 +130,8 @@ def parse_args() -> argparse.Namespace:
                    help="com --init-from, volta o ganho de giro ao de --turn-gain (no anda_r5L ele caiu de 100 "
                         "para 20 e os DNa01/DNa02, de limiar 90 a 200, pararam de disparar)")
     p.add_argument("--cmd-lr-mult", type=float, default=10.0, help="taxa dos ganhos de comando (0 = fixos)")
+    p.add_argument("--haltere-input", action="store_true",
+                   help="sentido de rotação: o giroscópio do tórax entra nos aferentes dos halteres (grupo declarado)")
     p.add_argument("--student", choices=("conectoma", "mlp"), default="conectoma")
     p.add_argument("--teacher", default="flybody", help='"flybody" ou o checkpoint de uma professora lenta')
     p.add_argument("--mlp-hidden", type=int, default=256)
@@ -260,6 +262,7 @@ def main() -> None:
         cfg = ControllerConfig(body="walk", control_dt=0.002, substeps=1, size_ref=args.size_ref, walk_gain=args.walk_gain,
                                turn_gain=args.turn_gain, enc_std=args.enc_std, prop_offset=args.prop_offset,
                                motor_tone=args.motor_tone, dec_gain=args.dec_gain, seed=args.seed, tau_scale=args.tau_scale,
+                               haltere_input=args.haltere_input,
                                motor_synapse_gains=args.motor_synapse_gains, all_synapse_gains=args.all_synapse_gains)
         pol = ConnectomePolicy(graph, cfg, device=device)
     mults = {"rede": 1.0, "codificador": 10.0, "tonus": 3.0, "decodificador": args.dec_lr_mult, "comando": args.cmd_lr_mult,

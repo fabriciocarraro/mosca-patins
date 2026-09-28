@@ -42,12 +42,14 @@ from torch import nn
 
 from mosca.body.fly import LEGS
 from mosca.body.ik import LEG_JOINTS
-from mosca.brain.graph import Connectome
+from mosca.brain.graph import Connectome, sensory_subclass
 from mosca.brain.muscles import leg_decoders
 from mosca.brain.pugliese import estimate_sizes, sample_params, signed_matrix
 from mosca.brain.rate_model import PuglieseNet
 
 N_JOINTS = len(LEG_JOINTS)
+GYRO = slice(171, 174)  # velocidade angular do tórax (rad/s) na observação do ambiente
+GYRO_SCALE = 2.0  # rad/s por unidade na entrada dos halteres
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,7 @@ class ControllerConfig:
     all_synapse_gains: bool = False  # degrau 2 completo: ganho positivo por ligação em toda a rede (sinal fixo)
     turn_gain: float = 100.0  # corrente nos DNa01/DNa02 do lado da curva por rad/s pedido
     tau_scale: float = 1.0  # multiplica as constantes de tempo sorteadas (τ ~20 ms no modelo de Pugliese)
+    haltere_input: bool = False  # sentido de rotação: o giroscópio do tórax entra nos aferentes dos halteres
 
 
 def leg_feature_index(leg: int, act_dim: int = 6 * N_JOINTS) -> np.ndarray:
@@ -116,6 +119,14 @@ class ConnectomePolicy(nn.Module):
         with torch.no_grad():
             for k in range(len(LEGS)):
                 self.enc_b[k].copy_(theta0[getattr(self, f"enc_neurons_{k}"), 0] + cfg.prop_offset)
+
+        # Halteres (opcional): os aferentes dos halteres, os giroscópios da mosca, recebem a velocidade
+        # angular do tórax por um mapa linear treinável, como os proprioceptores das patas.
+        if cfg.haltere_input:
+            halt = torch.as_tensor(sensory_subclass(c, "haltere"), dtype=torch.long, device=device)
+            self.register_buffer("halt_neurons", halt)
+            self.halt_w = nn.Parameter((cfg.enc_std * torch.randn(len(halt), 3, generator=gen)).to(device))
+            self.halt_b = nn.Parameter((theta0[halt, 0] + cfg.prop_offset).detach().clone())
 
         # Tônus de repouso dos neurônios motores das patas (corrente constante treinável).
         motors = torch.as_tensor(np.concatenate([c.groups[f"motor_{leg}"] for leg in LEGS]), dtype=torch.long, device=device)
@@ -172,7 +183,7 @@ class ConnectomePolicy(nn.Module):
     def param_groups(self) -> dict[str, list[nn.Parameter]]:
         """Parâmetros por grupo, para taxas de aprendizado relativas (ver connectome_train.py)."""
         groups = {"rede": [self.net.log_a, self.net.log_theta, self.net.log_tau],
-                "codificador": list(self.enc_w) + list(self.enc_b),
+                "codificador": list(self.enc_w) + list(self.enc_b) + ([self.halt_w, self.halt_b] if self.cfg.haltere_input else []),
                 "tonus": [self.motor_bias],
                 "decodificador": [self.dec_raw, self.dec_bias],
                 "comando": [self.log_walk_gain, self.log_turn_gain],
@@ -198,6 +209,9 @@ class ConnectomePolicy(nn.Module):
             neurons, feats = getattr(self, f"enc_neurons_{k}"), getattr(self, f"enc_features_{k}")
             x = (obs[:, feats] - getattr(self, f"enc_center_{k}")) / getattr(self, f"enc_scale_{k}")
             current = current.index_add(0, neurons, self.enc_w[k] @ x.T + self.enc_b[k][:, None])
+        if self.cfg.haltere_input:
+            g = obs[:, GYRO] / GYRO_SCALE
+            current = current.index_add(0, self.halt_neurons, self.halt_w @ g.T + self.halt_b[:, None])
         current = current.index_add(0, self.motors, self.motor_bias[:, None].expand(-1, batch))
         drive = self.log_walk_gain.exp() * v_cmd
         current = current.index_add(0, self.dng100, drive[None, :].expand(len(self.dng100), -1))

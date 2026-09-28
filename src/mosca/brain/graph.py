@@ -41,6 +41,12 @@ SENSORY_CLASSES = ("mechanosensory_proprioceptive", "mechanosensory_tactile")
 COMMAND_TYPES = ("DNg100", "DNg97", "DNb08", "DNa01", "DNa02", "DNg13", "MDN", "DNp01", "DNp09")
 
 
+def sensory_subclass(c: "Connectome", subclass: str, data_dir: Path = MALECNS_DIR) -> np.ndarray:
+    """Índices, no grafo, dos neurônios sensoriais de uma subclasse do MaleCNS (por exemplo, "haltere")."""
+    ann = pd.read_feather(data_dir / ANNOTATIONS, columns=["bodyId", "subclass"]).set_index("bodyId")
+    return np.flatnonzero(ann["subclass"].reindex(c.body_id).fillna("").to_numpy() == subclass)
+
+
 @dataclass
 class Connectome:
     body_id: np.ndarray  # (N,)
