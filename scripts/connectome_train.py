@@ -89,6 +89,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--haltere-offset", type=float, default=None)
     p.add_argument("--turn-cells", default="DNa01,DNa02")
     p.add_argument("--syn-lr-mult", type=float, default=3.0)
+    p.add_argument("--lr", type=float, default=3e-4, help="taxa-base inicial do ator (ajustada pela KL)")
+    p.add_argument("--mults", default="", help='multiplicadores por grupo, "rede=0.85,decodificador=1.8,..." '
+                                              "(medidos pelo m6_sensitivity.py); sobrepõem os padrões")
     p.add_argument("--cmd-lr-mult", type=float, default=10.0)
     cc = ControllerConfig()
     for name in ("size_ref", "walk_gain", "turn_gain", "enc_std", "prop_offset", "motor_tone", "dec_gain", "init_std",
@@ -164,7 +167,7 @@ def main() -> None:
                                 all_synapse_gains=args.all_synapse_gains, haltere_input=args.haltere_input,
                                 haltere_scale=args.haltere_scale, haltere_offset=args.haltere_offset,
                                 turn_cells=tuple(args.turn_cells.split(",")))
-    ppo_cfg = RecurrentPPOConfig(target_kl=args.target_kl, epochs=args.epochs, chunk=args.chunk,
+    ppo_cfg = RecurrentPPOConfig(target_kl=args.target_kl, epochs=args.epochs, chunk=args.chunk, lr=args.lr,
                                  minibatch_chunks=args.minibatch_chunks)
     env = SkateVecEnv(env_cfg)
     graph = Connectome.load(Path(args.graph))
@@ -174,6 +177,9 @@ def main() -> None:
     # codificador (proprioceptores abaixo do limiar) é ~40 vezes menos sensível que a rede.
     mults = {"rede": 1.0, "codificador": args.enc_lr_mult, "tonus": 3.0, "decodificador": 1.0,
              "comando": args.cmd_lr_mult, "exploracao": 1.0, "sinapses": args.syn_lr_mult}
+    for item in filter(None, args.mults.split(",")):
+        name, value = item.split("=")
+        mults[name] = float(value)
     groups = [{"params": ps, "lr": ppo_cfg.lr * mults[name], "mult": mults[name], "name": name}
               for name, ps in pol.param_groups().items()]
     assert sum(p.numel() for g in groups for p in g["params"]) == sum(p.numel() for p in pol.parameters())
