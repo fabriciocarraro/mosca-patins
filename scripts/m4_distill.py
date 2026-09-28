@@ -68,6 +68,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--buffer-iters", type=int, default=4)
     p.add_argument("--motor-synapse-gains", action="store_true",
                    help="degrau 2 da escada: ganho treinável por ligação nas entradas dos motores das patas")
+    p.add_argument("--all-synapse-gains", action="store_true",
+                   help="degrau 2 completo: ganho treinável por ligação em toda a rede (sinal fixo)")
     p.add_argument("--syn-lr-mult", type=float, default=10.0)
     p.add_argument("--eval-every", type=int, default=5)
     p.add_argument("--eval-seconds", type=float, default=5.0)
@@ -133,7 +135,7 @@ def main() -> None:
     cfg = ControllerConfig(body="walk", control_dt=0.002, substeps=1, size_ref=args.size_ref, walk_gain=args.walk_gain,
                            turn_gain=args.turn_gain, enc_std=args.enc_std, prop_offset=args.prop_offset,
                            motor_tone=args.motor_tone, dec_gain=args.dec_gain, seed=args.seed,
-                           motor_synapse_gains=args.motor_synapse_gains)
+                           motor_synapse_gains=args.motor_synapse_gains, all_synapse_gains=args.all_synapse_gains)
     pol = ConnectomePolicy(graph, cfg, device=device)
     mults = {"rede": 1.0, "codificador": 10.0, "tonus": 3.0, "decodificador": args.dec_lr_mult, "comando": 10.0,
              "exploracao": 0.0, "sinapses": args.syn_lr_mult}

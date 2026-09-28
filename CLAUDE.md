@@ -66,3 +66,7 @@ cada etapa está no README.
   (adesão, cabeça, abdômen, patas), diferente da ordem dos atuadores do modelo; o remapeamento
   está em `mosca.walking.teacher.ACTION_ORDER`. Sem ele, a mosca cai na hora. Os sensores da
   observação são a média dos 10 subpassos de cada passo de controle (2 ms), como no flybody.
+- Para saber onde um controlador de conectoma perde a informação, grave a atividade numa
+  coleta conduzida pela professora e meça o teto linear (regressão das ações dela) a partir
+  de cada camada: sentidos crus, proprioceptores, pré-motores, motores. No M4, a informação
+  chegava aos pré-motores e sumia nos motores; parâmetros por tipo celular não resolveram.

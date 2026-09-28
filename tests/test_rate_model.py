@@ -96,3 +96,21 @@ def test_synapse_gains_start_neutral_and_learn():
     assert torch.allclose(r1, r2, atol=1e-9)  # ganhos em 1: mesma rede
     r2[10:20].sum().backward()
     assert gained.log_gain.grad is not None and gained.log_gain.grad.abs().sum() > 0
+
+
+def test_edge_gains_match_plain_net_and_gradcheck():
+    w, params = _random_net(n=30, seed=2)
+    plain = PuglieseNet(w, params, dtype=torch.float64)
+    gained = PuglieseNet(w, params, dtype=torch.float64, edge_gains=True)
+    assert gained.log_edge_gain.numel() == w.nnz
+    current = torch.zeros(w.shape[0], 3, dtype=torch.float64)
+    current[:4] = 300.0
+    r1 = r2 = torch.zeros(w.shape[0], 3, dtype=torch.float64)
+    for _ in range(15):
+        r1, r2 = plain(r1, current, dt=2e-3), gained(r2, current, dt=2e-3)
+    assert torch.allclose(r1, r2, atol=1e-9)
+    # gradiente dos ganhos confere com diferenças finitas
+    from mosca.brain.rate_model import _GainedSpMM
+    x = torch.rand(w.shape[0], 2, dtype=torch.float64, requires_grad=True)
+    g = (0.1 * torch.randn(w.nnz, dtype=torch.float64)).requires_grad_(True)
+    assert torch.autograd.gradcheck(lambda gg, xx: _GainedSpMM.apply(gg, gained, xx), (g, x), eps=1e-6, atol=1e-5)

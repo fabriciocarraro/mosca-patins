@@ -63,7 +63,8 @@ class ControllerConfig:
     init_std: float = 0.6  # desvio inicial do ruído de exploração, em unidades de ação
     seed: int = 0
     body: str = "skate"  # "skate" (42 saídas) ou "walk" (42 + adesão das 6 garras)
-    motor_synapse_gains: bool = False  # degrau 2 da escada: ganho por ligação nas entradas dos motores
+    motor_synapse_gains: bool = False  # degrau 2 da escada, só nas ligações que entram nos motores das patas
+    all_synapse_gains: bool = False  # degrau 2 completo: ganho positivo por ligação em toda a rede (sinal fixo)
     turn_gain: float = 100.0  # corrente nos DNa01/DNa02 do lado da curva por rad/s pedido
 
 
@@ -91,7 +92,8 @@ class ConnectomePolicy(nn.Module):
         params = sample_params(sizes, rng, reference=cfg.size_ref * np.nanmedian(sizes))
         leg_motors = np.concatenate([c.groups[f"motor_{leg}"] for leg in LEGS])
         self.net = PuglieseNet(signed_matrix(c), params, cell_type=c.cell_type, device=device, surrogate=True,
-                               gain_rows=leg_motors if cfg.motor_synapse_gains else None)
+                               gain_rows=leg_motors if cfg.motor_synapse_gains else None,
+                               edge_gains=cfg.all_synapse_gains)
         self.n = c.n
         gen = torch.Generator().manual_seed(cfg.seed)
 
@@ -174,6 +176,8 @@ class ConnectomePolicy(nn.Module):
                 "exploracao": [self.log_std]}
         if self.net.has_gains:
             groups["sinapses"] = [self.net.log_gain]
+        if self.net.edge_gains:
+            groups["sinapses"] = [self.net.log_edge_gain]
         return groups
 
     @property

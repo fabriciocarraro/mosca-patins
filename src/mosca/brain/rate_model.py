@@ -15,10 +15,10 @@ O estado fica como (neurônios × lote), contíguo: é o formato que a multiplic
 CSR usa direto. Com o lote na primeira dimensão, as transpostas a cada multiplicação a
 deixavam 7 a 10 vezes mais lenta na GPU.
 
-Degrau 2 da escada de flexibilidade (`gain_rows`): as ligações que chegam aos neurônios
-dessas linhas (no controlador, os motores das patas) ganham um fator positivo treinável por
-ligação (em log, começando em 1); o sinal e a existência de cada ligação continuam os do
-conectoma. A entrada desses neurônios é somada à parte, com os ganhos.
+Degrau 2 da escada de flexibilidade: um fator positivo treinável por ligação (em log,
+começando em 1); o sinal e a existência de cada ligação continuam os do conectoma. Com
+`edge_gains=True` vale para todas as ligações; com `gain_rows`, só para as que chegam aos
+neurônios dessas linhas (no controlador, os motores das patas), somadas à parte.
 
 Gradiente substituto (`surrogate=True`): a simulação é exatamente a equação acima, mas no
 cálculo do gradiente um neurônio abaixo do limiar ganha uma inclinação que decai com a
@@ -79,15 +79,62 @@ class _Activation(torch.autograd.Function):
         return grad * dx, (grad * da).sum(dim=1, keepdim=True), None, None
 
 
+class _GainedSpMM(torch.autograd.Function):
+    """W(v) @ x com v = base · exp(ganho) por ligação; a volta dá o gradiente de x (pela transposta)
+    e o de cada ganho (produto amostrado, em blocos para limitar a memória)."""
+
+    @staticmethod
+    def forward(ctx, log_gain, net, x):
+        values = net.edge_base * log_gain.exp()
+        w = torch.sparse_csr_tensor(net.edge_crow, net.edge_col, values, size=net.edge_shape)
+        ctx.net = net
+        ctx.save_for_backward(values, x)
+        return torch.sparse.mm(w, x)
+
+    @staticmethod
+    def backward(ctx, grad):
+        values, x = ctx.saved_tensors
+        net = ctx.net
+        wt = torch.sparse_csr_tensor(net.edge_crow_t, net.edge_col_t, values[net.edge_perm_t],
+                                     size=(net.edge_shape[1], net.edge_shape[0]))
+        grad_x = torch.sparse.mm(wt, grad)
+        grad_v = torch.empty_like(values)
+        block = max(1, 2**24 // max(x.shape[1], 1))
+        for s in range(0, len(values), block):
+            e = slice(s, s + block)
+            grad_v[e] = (grad[net.edge_row[e]] * x[net.edge_col[e]]).sum(dim=1)
+        return grad_v * values, None, grad_x
+
+
 class PuglieseNet(nn.Module):
     def __init__(self, w: sp.csr_matrix, params: NeuronParams, cell_type: np.ndarray | None = None, b: float = B,
                  device: str | torch.device = "cpu", dtype=torch.float32, surrogate: bool = False,
-                 gain_rows: np.ndarray | None = None):
+                 gain_rows: np.ndarray | None = None, edge_gains: bool = False):
         """`w`: pós × pré com sinal × nº de sinapses (sem o b); `cell_type`: rótulo de cada neurônio
         para compartilhar os fatores treináveis (None = um fator por neurônio); `gain_rows`:
         neurônios cujas ligações de entrada ganham um fator treinável por ligação."""
         super().__init__()
         w = (b * w).tocsr()
+        w.sort_indices()
+        self.edge_gains = edge_gains
+        if edge_gains:  # ganho em todas as ligações
+            n_edges = w.nnz
+            ids = sp.csr_matrix((np.arange(n_edges, dtype=np.float64) + 1, w.indices, w.indptr), shape=w.shape).T.tocsr()
+            ids.sort_indices()
+
+            def lt(x):
+                return torch.as_tensor(np.asarray(x, dtype=np.int64), device=device)
+
+            self.register_buffer("edge_crow", lt(w.indptr), persistent=False)
+            self.register_buffer("edge_col", lt(w.indices), persistent=False)
+            self.register_buffer("edge_row", lt(np.repeat(np.arange(w.shape[0]), np.diff(w.indptr))), persistent=False)
+            self.register_buffer("edge_base", torch.as_tensor(w.data, dtype=dtype, device=device), persistent=False)
+            self.register_buffer("edge_crow_t", lt(ids.indptr), persistent=False)
+            self.register_buffer("edge_col_t", lt(ids.indices), persistent=False)
+            self.register_buffer("edge_perm_t", lt(ids.data.astype(np.int64) - 1), persistent=False)
+            self.edge_shape = w.shape
+            self.log_edge_gain = nn.Parameter(torch.zeros(n_edges, device=device, dtype=dtype))
+            gain_rows = None
         self.has_gains = gain_rows is not None and len(gain_rows) > 0
         if self.has_gains:
             rows = np.zeros(w.shape[0], dtype=bool)
@@ -133,7 +180,10 @@ class PuglieseNet(nn.Module):
 
     def deriv(self, r: torch.Tensor, current: torch.Tensor, a, theta, tau) -> torch.Tensor:
         """dr/dt para o estado r (N, lote) com corrente externa (N, lote)."""
-        drive = _SpMM.apply(self.w, self.wt, r) + current - theta
+        if self.edge_gains:
+            drive = _GainedSpMM.apply(self.log_edge_gain, self, r) + current - theta
+        else:
+            drive = _SpMM.apply(self.w, self.wt, r) + current - theta
         if self.has_gains:
             weight = self.gain_val * self.log_gain.exp()
             drive = drive.index_add(0, self.gain_post, weight[:, None] * r[self.gain_pre])
