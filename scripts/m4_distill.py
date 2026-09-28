@@ -20,6 +20,10 @@ isso, um aluno que fica para trás recebe da professora ordens de "correr para a
 dependem de um atraso que ele não tem como saber. `--student mlp` troca o conectoma por uma
 MLP com as mesmas entradas (controle: separa os problemas da receita dos da fiação).
 
+`--teacher` troca a professora: "flybody" (a política publicada, que só anda reagindo em menos
+de 10 ms) ou o checkpoint de uma professora lenta (m4_slow_teacher.py), que anda com a latência
+de uma rede de neurônios lentos; o alvo é o comando dela depois do atraso e do filtro.
+
 Critério do M4 (docs/plano.md): ≥90% de caminhadas de 5 s bem-sucedidas a 1–3 cm/s, e o
 DNa02 faz virar.
 
@@ -45,7 +49,7 @@ from mosca.brain.graph import Connectome  # noqa: E402
 from mosca.capture import library_versions  # noqa: E402
 from mosca.env.skate_env import attempt_seed  # noqa: E402
 from mosca.paths import MALECNS_DIR, RUNS  # noqa: E402
-from mosca.walking.student import MLPStudent, MLPStudentConfig  # noqa: E402
+from mosca.walking.student import MLPStudent, MLPStudentConfig, SlowTeacher  # noqa: E402
 from mosca.walking.teacher import FUTURE_STEPS, WalkingTeacher, straight_trajectory  # noqa: E402
 from mosca.walking.vec_env import WalkingVecEnv  # noqa: E402
 
@@ -113,6 +117,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--ref-leak-tau", type=float, default=0.0,
                    help="constante de tempo (s) com que a referência da professora é puxada para a mosca; 0 = fixa")
     p.add_argument("--student", choices=("conectoma", "mlp"), default="conectoma")
+    p.add_argument("--teacher", default="flybody", help='"flybody" ou o checkpoint de uma professora lenta')
     p.add_argument("--mlp-hidden", type=int, default=256)
     p.add_argument("--mlp-layers", type=int, default=2)
     p.add_argument("--student-lag-ms", type=float, default=0.0, help="MLP: atraso das entradas")
@@ -139,9 +144,36 @@ def actuator_filter(x: np.ndarray, alpha: np.ndarray) -> np.ndarray:
     return f
 
 
+class FlybodyTeacher:
+    """A política publicada do flybody: alvo = a ação dela cortada nos limites, no formato do aluno."""
+
+    def __init__(self, device):
+        self.policy = WalkingTeacher().to(device)
+
+    def reset(self) -> None:
+        pass
+
+    def __call__(self, env, obs):
+        a = self.policy(env.teacher_obs())
+        return env.student_target(a), env.teacher_ctrl(a)
+
+
+class SlowTeacherAdapter:
+    def __init__(self, path, n_envs):
+        self.teacher = SlowTeacher(path, n_envs)
+
+    def reset(self) -> None:
+        self.teacher.reset()
+
+    def __call__(self, env, obs):
+        y = self.teacher(obs, env.v_cmd)
+        return y.astype(np.float32), env.ctrl_from_student(y)
+
+
 def rollout(env, pol, teacher, refs, v_cmd, yaw, driver_teacher, chunk, device, mix=0.0, rng=None):
     """Uma leva de tentativas; devolve observações, alvos, máscara e os estados da rede por trecho."""
     env.reset(refs, v_cmd, yaw)
+    teacher.reset()
     T = min(len(r) for r in refs) - FUTURE_STEPS - 1
     n = env.n
     obs_buf = np.zeros((T, n, 186), np.float32)
@@ -161,10 +193,9 @@ def rollout(env, pol, teacher, refs, v_cmd, yaw, driver_teacher, chunk, device, 
             obs = env.student_obs()
             r, out = pol(r, to_dev(obs, device), vc)
             out_np = out.cpu().numpy()
-            a_teacher = teacher(env.teacher_obs())
-            target = env.student_target(a_teacher)
+            target, teacher_ctrl = teacher(env, obs)
             use_teacher = driver_teacher | ((rng.random(n) < mix) if mix > 0 else False)
-            ctrl = np.where(use_teacher[:, None], env.teacher_ctrl(a_teacher), env.ctrl_from_student(out_np))
+            ctrl = np.where(use_teacher[:, None], teacher_ctrl, env.ctrl_from_student(out_np))
             obs_buf[t], tgt_buf[t], valid[t] = obs, target, env.alive
             env.step(ctrl, out_np)
             steps = t + 1
@@ -186,7 +217,7 @@ def main() -> None:
     (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
 
     env = WalkingVecEnv(args.envs, n_threads=args.threads, ref_leak_tau=args.ref_leak_tau)
-    teacher = WalkingTeacher().to(device)
+    teacher = FlybodyTeacher(device) if args.teacher == "flybody" else SlowTeacherAdapter(args.teacher, args.envs)
     if args.student == "mlp":
         graph = None
         cfg = MLPStudentConfig(hidden=args.mlp_hidden, layers=args.mlp_layers, lag_steps=round(args.student_lag_ms / 2),

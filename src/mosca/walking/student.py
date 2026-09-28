@@ -133,3 +133,30 @@ class MLPStudent(nn.Module):
             state.append(y)
         r_new = torch.cat(state, dim=1).T if state else r
         return r_new, y
+
+
+class SlowTeacher:
+    """A professora lenta (scripts/m4_slow_teacher.py) como professora da destilação: o ator (a
+    média da política) e a latência em que ela terminou o treino, por ambiente. O alvo do aluno
+    é o comando que chega aos atuadores, depois do atraso e do filtro dela."""
+
+    def __init__(self, path, n_envs: int):
+        from mosca.rl.ppo import ActorCritic
+
+        ck = torch.load(path, weights_only=False, map_location="cpu")
+        priv_dim = ck["ac"]["critic.0.weight"].shape[1] - N_FEATURES
+        self.ac = ActorCritic(N_FEATURES, priv_dim, ck["ac"]["actor.4.weight"].shape[0])
+        self.ac.load_state_dict(ck["ac"])
+        level = ck["state"]["latency_level"]
+        self.delay_steps = round(level * ck["latency"]["delay_ms"] / 2)
+        self.tau = level * ck["latency"]["tau_ms"] / 1000
+        self.lat = OutputLatency(n_envs, self.ac.actor[-1].out_features, self.delay_steps)
+        self.lat.set(self.delay_steps, self.tau)
+
+    def reset(self) -> None:
+        self.lat.reset(np.zeros(self.lat.y.shape[1]))
+
+    def __call__(self, obs: np.ndarray, v_cmd: np.ndarray) -> np.ndarray:
+        with torch.no_grad():
+            u = self.ac.actor(torch.as_tensor(features(obs, v_cmd), dtype=torch.float32)).numpy()
+        return self.lat(u)
