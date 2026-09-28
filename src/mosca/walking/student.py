@@ -34,6 +34,47 @@ class MLPStudentConfig:
     seed: int = 0
 
 
+def features(obs: np.ndarray, v_cmd: np.ndarray) -> np.ndarray:
+    """As entradas do aluno (lote, N_FEATURES) a partir da observação (lote, 186): as mesmas do
+    codificador do conectoma, nas mesmas escalas, e os comandos de velocidade e giro."""
+    idx = np.concatenate([leg_feature_index(k) for k in range(6)])
+    x = (obs[:, idx] - np.tile(FEATURE_CENTER, 6)) / np.tile(FEATURE_SCALE, 6)
+    return np.concatenate([x, np.asarray(v_cmd)[:, None], obs[:, 184:185]], axis=1)
+
+
+class OutputLatency:
+    """Atraso (em passos de controle) e filtro de primeira ordem nas saídas de uma política, por
+    ambiente: y(t) = filtro(u(t − atraso)). Imita a lentidão de uma rede de neurônios de taxa."""
+
+    def __init__(self, n_envs: int, n_out: int, delay_steps: int, tau: float, dt: float = 0.002):
+        self.delay = delay_steps
+        self.alpha = dt / tau if tau > 0 else 1.0
+        self.queue = np.zeros((max(delay_steps, 1), n_envs, n_out))
+        self.y = np.zeros((n_envs, n_out))
+        self.head = 0
+
+    def reset(self, u0: np.ndarray) -> None:
+        self.queue[:] = u0
+        self.y[:] = u0
+        self.head = 0
+
+    def __call__(self, u: np.ndarray) -> np.ndarray:
+        if self.delay > 0:
+            delayed = self.queue[self.head].copy()
+            self.queue[self.head] = u
+            self.head = (self.head + 1) % self.delay
+        else:
+            delayed = u
+        self.y = self.y + self.alpha * (delayed - self.y)
+        return self.y.copy()
+
+    def state(self) -> np.ndarray:
+        """Comandos ainda na fila (do mais antigo ao mais novo) e o estado do filtro: (lote, …)."""
+        order = [(self.head + k) % len(self.queue) for k in range(len(self.queue))] if self.delay > 0 else []
+        parts = [self.queue[k] for k in order] + [self.y]
+        return np.concatenate(parts, axis=1)
+
+
 class MLPStudent(nn.Module):
     def __init__(self, cfg: MLPStudentConfig = MLPStudentConfig(), device="cpu"):
         super().__init__()
