@@ -34,14 +34,17 @@ N_OUT = 6 * len(LEG_JOINTS) + 6  # 42 servos das juntas + 6 adesões
 
 class WalkingVecEnv:
     def __init__(self, n_envs: int, n_threads: int = 8, fixed_ctrl: dict[str, float] | None = None,
-                 min_height: float = 0.07, max_tilt_deg: float = 60.0, ref_leak_tau: float = 0.0):
+                 min_height: float = 0.07, max_tilt_deg: float = 60.0, ref_leak_tau: float = 0.0,
+                 ref_heading_tau: float | None = None):
         self.model = build_fly_spec(PhysicsConfig()).compile()
         m = self.model
         self.n = n_envs
         # 0: referência fixa (a da reinicialização). > 0: a referência avança com os comandos e é puxada
         # para a posição e o rumo da mosca com esta constante de tempo (s), e o atraso acumulado que a
-        # professora tenta recuperar fica limitado a ~velocidade × constante.
+        # professora tenta recuperar fica limitado a ~velocidade × constante. O rumo pode ter a própria
+        # constante (`ref_heading_tau`, maior = a professora corrige mais o desvio de rumo).
         self.ref_leak_tau = ref_leak_tau
+        self.ref_heading_tau = ref_leak_tau if ref_heading_tau is None else ref_heading_tau
         self.substeps = round(CONTROL_DT / m.opt.timestep)
         self.datas = [mujoco.MjData(m) for _ in range(n_envs)]
         self.pool = ThreadPoolExecutor(max_workers=n_threads)
@@ -149,6 +152,7 @@ class WalkingVecEnv:
             self.prev_out[alive] = out[alive]
         root = self.obs_fn.root_qadr
         k = min(1.0, CONTROL_DT / self.ref_leak_tau) if self.ref_leak_tau > 0 else 0.0
+        k_head = min(1.0, CONTROL_DT / self.ref_heading_tau) if self.ref_heading_tau > 0 else 0.0
         for i in alive:
             d = self.datas[i]
             self.t[i] += 1
@@ -158,7 +162,7 @@ class WalkingVecEnv:
                 self.ref_heading[i] += self.yaw_cmd[i] * CONTROL_DT
                 self.ref_xy[i] += k * (d.qpos[root : root + 2] - self.ref_xy[i])
                 dh = heading_of(d.qpos[root + 3 : root + 7]) - self.ref_heading[i]
-                self.ref_heading[i] += k * np.arctan2(np.sin(dh), np.cos(dh))
+                self.ref_heading[i] += k_head * np.arctan2(np.sin(dh), np.cos(dh))
             up = d.xmat[self.thorax][8]
             geoms = d.contact.geom[: d.ncon]
             floor_hits = geoms[(geoms == self.floor).any(axis=1)]

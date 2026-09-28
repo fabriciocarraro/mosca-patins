@@ -124,6 +124,12 @@ def parse_args() -> argparse.Namespace:
                    help="erro das ações depois do filtro dos atuadores (o que chega às juntas)")
     p.add_argument("--ref-leak-tau", type=float, default=0.0,
                    help="constante de tempo (s) com que a referência da professora é puxada para a mosca; 0 = fixa")
+    p.add_argument("--ref-heading-tau", type=float, default=None,
+                   help="constante de tempo do rumo da referência (padrão: a de --ref-leak-tau)")
+    p.add_argument("--reset-turn-gain", action="store_true",
+                   help="com --init-from, volta o ganho de giro ao de --turn-gain (no anda_r5L ele caiu de 100 "
+                        "para 20 e os DNa01/DNa02, de limiar 90 a 200, pararam de disparar)")
+    p.add_argument("--cmd-lr-mult", type=float, default=10.0, help="taxa dos ganhos de comando (0 = fixos)")
     p.add_argument("--student", choices=("conectoma", "mlp"), default="conectoma")
     p.add_argument("--teacher", default="flybody", help='"flybody" ou o checkpoint de uma professora lenta')
     p.add_argument("--mlp-hidden", type=int, default=256)
@@ -241,7 +247,8 @@ def main() -> None:
     run_dir = RUNS / args.run
     (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
 
-    env = WalkingVecEnv(args.envs, n_threads=args.threads, ref_leak_tau=args.ref_leak_tau)
+    env = WalkingVecEnv(args.envs, n_threads=args.threads, ref_leak_tau=args.ref_leak_tau,
+                        ref_heading_tau=args.ref_heading_tau)
     teacher = FlybodyTeacher(device) if args.teacher == "flybody" else SlowTeacherAdapter(args.teacher, args.envs)
     if args.student == "mlp":
         graph = None
@@ -255,7 +262,7 @@ def main() -> None:
                                motor_tone=args.motor_tone, dec_gain=args.dec_gain, seed=args.seed, tau_scale=args.tau_scale,
                                motor_synapse_gains=args.motor_synapse_gains, all_synapse_gains=args.all_synapse_gains)
         pol = ConnectomePolicy(graph, cfg, device=device)
-    mults = {"rede": 1.0, "codificador": 10.0, "tonus": 3.0, "decodificador": args.dec_lr_mult, "comando": 10.0,
+    mults = {"rede": 1.0, "codificador": 10.0, "tonus": 3.0, "decodificador": args.dec_lr_mult, "comando": args.cmd_lr_mult,
              "exploracao": 0.0, "sinapses": args.syn_lr_mult, "mlp": 1.0}
     alpha_np = env.act_alpha.astype(np.float32)
     alpha = to_dev(alpha_np, device)
@@ -277,6 +284,9 @@ def main() -> None:
             old = PuglieseNetKeys.edge_ids_for_rows(pol, graph)
             with torch.no_grad():
                 pol.net.log_edge_gain[old] = src["policy"]["net.log_gain"].to(device)
+        if args.reset_turn_gain:
+            with torch.no_grad():
+                pol.log_turn_gain.fill_(float(np.log(args.turn_gain)))
         print(f"partindo de {args.init_from}: {len(copied)} tensores copiados", flush=True)
     if args.resume and latest.exists():
         ckpt = torch.load(latest, weights_only=False, map_location=device)

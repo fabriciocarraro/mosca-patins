@@ -111,7 +111,9 @@ def main() -> None:
                                 "speed_mean": float(res["speed"][sel].mean())}
     results["straight"] = straight
     results["straight_success"] = float(ok.mean())
-    print(f"reta: {ok.mean():.0%} bem-sucedidas (critério: 90%)")
+    results["straight_yaw_rate"] = float(res["yaw_rate"][res["completed"]].mean()) if res["completed"].any() else 0.0
+    print(f"reta: {ok.mean():.0%} bem-sucedidas (critério: 90%); giro médio sem giro pedido "
+          f"{results['straight_yaw_rate']:+.2f} rad/s")
     for speed, s in straight.items():
         print(f"   {speed} cm/s: {s['success']:.0%} bem-sucedidas, quedas {s['falls']:.0%}, velocidade média {s['speed_mean']:.2f} cm/s")
 
