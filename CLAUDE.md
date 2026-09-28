@@ -115,3 +115,9 @@ cada etapa está no README.
   atualização mexia demais na política e o DAgger desandava depois de ~10 iterações; com 0,3, os testes
   do critério ficaram estáveis (98%/100% na iteração 6, 92%/100% na 9). Checkpoint: runs/anda_r5I/best_it6.pt
   no Spark e no notebook.
+- Determinismo da rede na GPU: a `torch.sparse.mm` (cuSPARSE) soma em ordem variável, e o conectoma
+  com neurônios de 5 ms amplifica a diferença (0,07 na ação em 16 passos no começo da tentativa). Isso
+  inflava a KL do PPO de patins (a atualização re-executa a política) e quebraria a re-simulação do
+  cérebro na captura (M5). Use `--net-dtype float64` no PPO e na captura (a re-execução reproduz a
+  coleta exatamente; a multiplicação fica 2 a 3× mais lenta). O Triton do venv não compila no Spark
+  (faltam os cabeçalhos do Python do sistema).
