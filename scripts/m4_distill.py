@@ -4,8 +4,10 @@ A professora (mosca.walking.teacher) segue uma trajetória de referência; o alu
 controlador de conectoma, corpo "walk") só recebe a velocidade e o giro pedidos e os
 sentidos das próprias patas. A cada iteração:
 1. Uma fração β das moscas é conduzida pela professora e o resto pelo aluno (β cai de 1 a
-   `--beta-min` em `--beta-iters` iterações). Em todas, a professora diz, a cada 2 ms, o que
-   faria naquele estado; esse é o alvo do aluno (a ação dela já cortada nos limites).
+   `--beta-min` em `--beta-iters` iterações). Nas do aluno, a cada passo a ação executada é a
+   da professora com probabilidade `--mix` (caindo até `--mix-min`): o aluno vê os próprios
+   erros, e as intervenções evitam a queda imediata. Em todas, a professora diz, a cada 2 ms,
+   o que faria naquele estado; esse é o alvo do aluno (a ação dela já cortada nos limites).
 2. O aluno treina por retropropagação em trechos de `--chunk` passos, sorteados das últimas
    `--buffer-iters` iterações: cada trecho recomeça do estado da rede gravado na coleta, com
    `--burn-in` passos sem gradiente para atualizar o estado, e o erro quadrático normalizado
@@ -42,6 +44,26 @@ from mosca.walking.vec_env import WalkingVecEnv  # noqa: E402
 TEST_COMMANDS = [(v, y) for v in (1.0, 2.0, 3.0) for y in (0.0, 1.0, -1.0)]
 
 
+class PuglieseNetKeys:
+    @staticmethod
+    def edge_ids_for_rows(pol, graph) -> torch.Tensor:
+        """Índices, na lista de todas as ligações (ordem CSR), das ligações que chegam aos motores das
+        patas, na mesma ordem em que o modo "só motores" guarda os seus ganhos (ordem COO por linha)."""
+        from mosca.body.fly import LEGS as _LEGS
+        from mosca.brain.pugliese import signed_matrix
+        w = (0.03 * signed_matrix(graph)).tocsr()
+        w.sort_indices()
+        rows = np.zeros(w.shape[0], dtype=bool)
+        rows[np.concatenate([graph.groups[f"motor_{leg}"] for leg in _LEGS])] = True
+        edge_rows = np.repeat(np.arange(w.shape[0]), np.diff(w.indptr))
+        coo = w.tocoo()
+        order_csr = np.flatnonzero(rows[edge_rows])
+        order_coo = np.flatnonzero(rows[coo.row])
+        # COO de uma CSR ordenada percorre as ligações na mesma ordem da CSR
+        assert np.array_equal(coo.row[order_coo], edge_rows[order_csr])
+        return torch.as_tensor(order_csr, device=pol.device)
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--run", required=True)
@@ -58,6 +80,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--yaw-max", type=float, default=1.0)
     p.add_argument("--beta-iters", type=int, default=15)
     p.add_argument("--beta-min", type=float, default=0.1)
+    p.add_argument("--mix", type=float, default=0.0, help="probabilidade inicial de a professora intervir a cada passo")
+    p.add_argument("--mix-min", type=float, default=0.0)
+    p.add_argument("--mix-iters", type=int, default=30)
+    p.add_argument("--init-from", default="", help="checkpoint para partir (parâmetros com o mesmo nome e forma; "
+                                                  "ganhos dos motores viram ganhos das mesmas ligações)")
     p.add_argument("--chunk", type=int, default=48)
     p.add_argument("--burn-in", type=int, default=16)
     p.add_argument("--minibatch-chunks", type=int, default=16)
@@ -84,7 +111,7 @@ def to_dev(x, device, dtype=torch.float32):
     return torch.as_tensor(np.asarray(x), dtype=dtype, device=device)
 
 
-def rollout(env, pol, teacher, refs, v_cmd, yaw, driver_teacher, chunk, device):
+def rollout(env, pol, teacher, refs, v_cmd, yaw, driver_teacher, chunk, device, mix=0.0, rng=None):
     """Uma leva de tentativas; devolve observações, alvos, máscara e os estados da rede por trecho."""
     env.reset(refs, v_cmd, yaw)
     T = min(len(r) for r in refs) - FUTURE_STEPS - 1
@@ -108,7 +135,8 @@ def rollout(env, pol, teacher, refs, v_cmd, yaw, driver_teacher, chunk, device):
             out_np = out.cpu().numpy()
             a_teacher = teacher(env.teacher_obs())
             target = env.student_target(a_teacher)
-            ctrl = np.where(driver_teacher[:, None], env.teacher_ctrl(a_teacher), env.ctrl_from_student(out_np))
+            use_teacher = driver_teacher | ((rng.random(n) < mix) if mix > 0 else False)
+            ctrl = np.where(use_teacher[:, None], env.teacher_ctrl(a_teacher), env.ctrl_from_student(out_np))
             obs_buf[t], tgt_buf[t], valid[t] = obs, target, env.alive
             env.step(ctrl, out_np)
             steps = t + 1
@@ -144,6 +172,18 @@ def main() -> None:
     state = {"it": 0}
     tgt_std = None
     latest = run_dir / "latest.pt"
+    if args.init_from and not (args.resume and latest.exists()):
+        src = torch.load(args.init_from, weights_only=False, map_location=device)
+        own = pol.state_dict()
+        copied = {k: v for k, v in src["policy"].items() if k in own and own[k].shape == v.shape}
+        own.update(copied)
+        pol.load_state_dict(own)
+        tgt_std = src.get("tgt_std")
+        if "net.log_gain" in src["policy"] and pol.net.edge_gains:  # ganhos dos motores -> mesmas ligações
+            old = PuglieseNetKeys.edge_ids_for_rows(pol, graph)
+            with torch.no_grad():
+                pol.net.log_edge_gain[old] = src["policy"]["net.log_gain"].to(device)
+        print(f"partindo de {args.init_from}: {len(copied)} tensores copiados", flush=True)
     if args.resume and latest.exists():
         ckpt = torch.load(latest, weights_only=False, map_location=device)
         pol.load_state_dict(ckpt["policy"])
@@ -170,7 +210,8 @@ def main() -> None:
         beta = max(args.beta_min, 1.0 - it / max(args.beta_iters, 1))
         driver_teacher = np.zeros(n, bool)
         driver_teacher[rng.permutation(n)[: round(beta * n)]] = True
-        ro = rollout(env, pol, teacher, refs, v_cmd, yaw, driver_teacher, args.chunk, device)
+        mix = max(args.mix_min, args.mix * (1.0 - it / max(args.mix_iters, 1))) if args.mix > 0 else 0.0
+        ro = rollout(env, pol, teacher, refs, v_cmd, yaw, driver_teacher, args.chunk, device, mix=mix, rng=rng)
         t_collect = time.perf_counter() - t0
         buffer = (buffer + [ro])[-args.buffer_iters :]
         if tgt_std is None:  # escala de cada saída, fixada na primeira coleta (só a professora)
@@ -215,7 +256,7 @@ def main() -> None:
         speed = ro["dist"] / np.maximum(ro["t"] * 0.002, 1e-6)
         ratio = float(np.mean(speed[student] / v_cmd[student])) if student.any() else float("nan")
         falls = float(np.mean(ro["fell"][student])) if student.any() else float("nan")
-        metrics = {"it": it, "beta": beta, "loss": float(np.mean(losses)), "loss_first": float(np.mean(losses[:5])),
+        metrics = {"it": it, "beta": beta, "mix": mix, "loss": float(np.mean(losses)), "loss_first": float(np.mean(losses[:5])),
                    "loss_last": float(np.mean(losses[-5:])), "student_falls": falls,
                    "student_speed_ratio": ratio, "time_collect": t_collect, "time_train": t_train}
         if args.eval_every and (it + 1) % args.eval_every == 0:

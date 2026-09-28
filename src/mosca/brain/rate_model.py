@@ -86,7 +86,7 @@ class _GainedSpMM(torch.autograd.Function):
     @staticmethod
     def forward(ctx, log_gain, net, x):
         values = net.edge_base * log_gain.exp()
-        w = torch.sparse_csr_tensor(net.edge_crow, net.edge_col, values, size=net.edge_shape)
+        w = torch.sparse_csr_tensor(net.edge_crow, net.edge_col, values, size=net.edge_shape, check_invariants=False)
         ctx.net = net
         ctx.save_for_backward(values, x)
         return torch.sparse.mm(w, x)
@@ -96,7 +96,7 @@ class _GainedSpMM(torch.autograd.Function):
         values, x = ctx.saved_tensors
         net = ctx.net
         wt = torch.sparse_csr_tensor(net.edge_crow_t, net.edge_col_t, values[net.edge_perm_t],
-                                     size=(net.edge_shape[1], net.edge_shape[0]))
+                                     size=(net.edge_shape[1], net.edge_shape[0]), check_invariants=False)
         grad_x = torch.sparse.mm(wt, grad)
         grad_v = torch.empty_like(values)
         block = max(1, 2**24 // max(x.shape[1], 1))
