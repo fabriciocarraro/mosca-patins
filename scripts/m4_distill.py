@@ -54,6 +54,7 @@ from mosca.brain.graph import Connectome  # noqa: E402
 from mosca.capture import library_versions  # noqa: E402
 from mosca.env.skate_env import attempt_seed  # noqa: E402
 from mosca.paths import MALECNS_DIR, RUNS  # noqa: E402
+from mosca.walking.evaluate import quick_m4  # noqa: E402
 from mosca.walking.student import MLPStudent, MLPStudentConfig, SlowTeacher  # noqa: E402
 from mosca.walking.teacher import FUTURE_STEPS, WalkingTeacher, straight_trajectory  # noqa: E402
 from mosca.walking.vec_env import WalkingVecEnv, mirror_obs, mirror_out  # noqa: E402
@@ -398,7 +399,26 @@ def main() -> None:
                    "loss_first": float(np.mean(main_losses[:5])), "loss_last": float(np.mean(main_losses[-5:])),
                    "student_falls": falls,
                    "student_speed_ratio": ratio, "time_collect": t_collect, "time_train": t_train}
-        if args.eval_every and (it + 1) % args.eval_every == 0:
+        if args.eval_every and (it + 1) % args.eval_every == 0 and graph is not None:
+            # conectoma: o critério do M4 (retas a 1–3 cm/s e DNa02 de cada lado, pareado), sem professora
+            with swapped(pol, ema) if ema is not None else nullcontext():
+                q = quick_m4(env, pol, graph.groups, device, seconds=args.eval_seconds, seed=args.seed)
+            metrics.update({f"eval_{key}": val for key, val in q.items()})
+            score = q["score"]
+            best = score > state.get("best_score", -1.0)
+            print(f"      teste sem professora ({args.eval_seconds:g} s): retas {q['straight_success']:.0%} "
+                  f"(1/2/3 cm/s: {q['straight_1']:.0%}/{q['straight_2']:.0%}/{q['straight_3']:.0%}, velocidades "
+                  f"{q['speed_1']:.2f}/{q['speed_2']:.2f}/{q['speed_3']:.2f}), DNa02 lado certo {q['dna02_right']:.0%} "
+                  f"(efeito {q['dna02_left_effect']:+.2f}/{q['dna02_right_effect']:+.2f} rad/s), quedas {q['falls']:.0%}"
+                  f"{' (melhor até aqui)' if best else ''}", flush=True)
+            if best:
+                state["best_score"], state["best_it"] = score, it + 1
+                policy = pol.state_dict()
+                if ema is not None:
+                    policy.update({k: v.detach().clone() for k, v in ema.items()})
+                torch.save({"policy": policy, "state": dict(state), "tgt_std": tgt_std, "tgt_std_f": tgt_std_f,
+                            "controller": asdict(cfg), "args": vars(args), "eval": q}, run_dir / "best.pt")
+        elif args.eval_every and (it + 1) % args.eval_every == 0:
             cmds = [TEST_COMMANDS[j % len(TEST_COMMANDS)] for j in range(n)]
             ev_refs = [straight_trajectory(round(args.eval_seconds / 0.002) + FUTURE_STEPS + 1, v, yaw_speed=y) for v, y in cmds]
             with swapped(pol, ema) if ema is not None else nullcontext():

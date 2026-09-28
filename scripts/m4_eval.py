@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from mosca.brain.controller import ConnectomePolicy, ControllerConfig  # noqa: E402
 from mosca.brain.graph import Connectome  # noqa: E402
 from mosca.paths import MALECNS_DIR  # noqa: E402
-from mosca.walking.teacher import FUTURE_STEPS, straight_trajectory  # noqa: E402
+from mosca.walking.evaluate import run_student as run  # noqa: E402
 from mosca.walking.vec_env import WalkingVecEnv  # noqa: E402
 
 DT = 0.002
@@ -50,42 +50,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--out", default="", help="JSON com os resultados")
     p.add_argument("--raw", action="store_true", help="usa os parâmetros crus mesmo se o checkpoint tiver a média móvel")
     return p.parse_args()
-
-
-def run(env: WalkingVecEnv, pol: ConnectomePolicy, v_cmd, yaw_cmd, headings, seconds, device,
-        silence=None, extra_current=None) -> dict:
-    """Uma leva de tentativas do aluno sozinho; devolve quedas e médias de velocidade e giro."""
-    n = env.n
-    steps = round(seconds / DT)
-    refs = [straight_trajectory(steps + FUTURE_STEPS + 1, v, yaw_speed=y, heading=h) for v, y, h in zip(v_cmd, yaw_cmd, headings)]
-    env.reset(refs, v_cmd, yaw_cmd)
-    r = pol.initial_state(n)
-    vc = torch.as_tensor(v_cmd, dtype=torch.float32, device=device)
-    warm = round(0.5 / DT)
-    v_sum, w_sum, count = np.zeros(n), np.zeros(n), np.zeros(n)
-    with torch.no_grad():
-        for t in range(steps):
-            if not env.alive.any():
-                break
-            obs = torch.as_tensor(env.student_obs(), dtype=torch.float32, device=device)
-            current = pol.currents(obs, vc)
-            if extra_current is not None:
-                current = current + extra_current
-            r = pol.net(r, current, dt=pol.cfg.control_dt, substeps=pol.cfg.substeps)
-            if silence is not None:
-                r[silence] = 0.0
-            out = pol.decode(r).cpu().numpy()
-            alive = env.alive.copy()
-            env.step(env.ctrl_from_student(out), out)
-            if t >= warm:
-                m = alive & env.alive
-                v_sum += np.where(m, env.sensor_mean[:, env.velocimeter[0]], 0.0)
-                w_sum += np.where(m, env.sensor_mean[:, env.gyro[2]], 0.0)
-                count += m
-    speed = v_sum / np.maximum(count, 1)
-    yaw_rate = w_sum / np.maximum(count, 1)
-    completed = ~env.fell & (env.t >= steps - 1)
-    return {"fell": env.fell.copy(), "completed": completed, "speed": speed, "yaw_rate": yaw_rate}
 
 
 def main() -> None:
