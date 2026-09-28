@@ -112,6 +112,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--minibatch-chunks", type=int, default=16)
     p.add_argument("--updates", type=int, default=60, help="passos do otimizador por iteração")
     p.add_argument("--lr", type=float, default=1e-3)
+    p.add_argument("--lr-drop-at", type=int, default=0, help="a partir desta iteração, a taxa é multiplicada por --lr-drop")
+    p.add_argument("--lr-drop", type=float, default=0.3)
     p.add_argument("--dec-lr-mult", type=float, default=10.0,
                    help="multiplicador da taxa do decodificador (os alvos têm médias de várias unidades)")
     p.add_argument("--buffer-iters", type=int, default=4)
@@ -272,7 +274,7 @@ def main() -> None:
              "exploracao": 0.0, "sinapses": args.syn_lr_mult, "mlp": 1.0}
     alpha_np = env.act_alpha.astype(np.float32)
     alpha = to_dev(alpha_np, device)
-    opt = torch.optim.Adam([{"params": ps, "lr": args.lr * mults[name], "name": name}
+    opt = torch.optim.Adam([{"params": ps, "lr": args.lr * mults[name], "base_lr": args.lr * mults[name], "name": name}
                             for name, ps in pol.param_groups().items()])
     state = {"it": 0}
     ema = None
@@ -314,6 +316,9 @@ def main() -> None:
     print(f"{name}, {sum(p.numel() for p in pol.parameters()):,} parâmetros; {device}")
     print("  it   beta  erro_norm (início→fim)  filtrado  quedas(aluno)  vel_aluno/pedida  coleta  treino")
     for it in range(state["it"], args.iters):
+        factor = args.lr_drop if args.lr_drop_at and it >= args.lr_drop_at else 1.0
+        for group in opt.param_groups:  # a taxa de cada grupo vem da configuração (vale também ao retomar)
+            group["lr"] = group.get("base_lr", group["lr"]) * factor
         t0 = time.perf_counter()
         rng = np.random.default_rng(attempt_seed(args.seed, it))
         n = env.n
