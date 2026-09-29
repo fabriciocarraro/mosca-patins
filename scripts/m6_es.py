@@ -5,7 +5,8 @@ ambiente é uma variação da mosca: fatores por tipo celular, tônus dos motore
 decodificador anatômico perturbados (+σε e −σε, pares antitéticos); os ganhos por ligação ficam os do
 conectoma que anda. As variações que patinam melhor (retorno da tentativa, a mesma recompensa do PPO)
 puxam a média da geração seguinte. A ação é a média da política, sem ruído: a exploração é nos parâmetros.
-Currículo de velocidade como no PPO (a faixa pedida abre com 80% de sucesso).
+Currículo de velocidade como no PPO (a faixa pedida abre com 80% de acerto), julgado pela avaliação da
+média (a população perturbada acerta pouco).
 
 `--probe`: só o diagnóstico — sorteia uma geração em cada escala de `--probe-scales` (múltiplos dos σ)
 e mostra se alguma variação sai do ponto fixo (velocidade) em comparação com a média, sem atualizar nada.
@@ -185,9 +186,7 @@ def main() -> None:
         episodes = run_episodes(env, pol, attempts, v_cmd, es.offsets(eps, device))
         ret = np.array([e["return"] for e in episodes])
         grad_norm = es.step(eps, ret)
-        success = command_success(episodes, env.max_steps)
-        if success >= 0.8:
-            state["v_max"] = min(args.v_final, v_max + args.v_step)
+        success = command_success(episodes, env.max_steps)  # da população perturbada (só registro)
         state["gen"] = gen + 1
         state["attempts"] += n
         state["steps"] += int(sum(e["steps"] for e in episodes))
@@ -199,13 +198,19 @@ def main() -> None:
         if args.eval_every and (gen + 1) % args.eval_every == 0:
             speed = min(args.eval_speed, state["v_max"])
             ev = run_episodes(env, pol, TEST_ATTEMPT_BASE + np.arange(n), np.full(n, speed))
+            # Currículo pela média (a mosca sem perturbação): a velocidade pedida sobe com 80% de acerto.
+            eval_success = command_success(ev, env.max_steps)
+            if eval_success >= 0.8 and speed >= state["v_max"]:
+                state["v_max"] = min(args.v_final, state["v_max"] + args.v_step)
+            metrics.update(eval_success=eval_success)
             metrics.update(eval_v_cmd=speed, eval_speed=float(np.mean([e["speed"] for e in ev])),
                            eval_glide=float(np.mean([e["glide_frac"] for e in ev])),
                            eval_fell=float(np.mean([e["fell"] for e in ev])))
             score = metrics["eval_speed"] * (1 - metrics["eval_fell"]) * speed / max(speed, 1e-9)
             best = score > state.get("best_score", -1.0)
             print(f"      avaliação da média a {speed:g} cm/s: vel {metrics['eval_speed']:.2f}, desliza "
-                  f"{metrics['eval_glide']:.2f}, quedas {metrics['eval_fell']:.0%}" + (" (melhor até agora)" if best else ""),
+                  f"{metrics['eval_glide']:.2f}, quedas {metrics['eval_fell']:.0%}, acerto {eval_success:.0%}"
+                  + (" (melhor até agora)" if best else ""),
                   flush=True)
             if best:
                 state["best_score"], state["best_gen"] = score, gen + 1
