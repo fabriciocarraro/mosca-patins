@@ -39,7 +39,7 @@ import torch
 from torch.distributions import Normal
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from mosca.brain.controller import ConnectomePolicy, ControllerConfig  # noqa: E402
+from mosca.brain.controller import ConnectomePolicy, ControllerConfig, load_walking  # noqa: E402
 from mosca.capture import ColoredNoise, Recorder, library_versions, noise_beta  # noqa: E402
 from mosca.brain.graph import Connectome  # noqa: E402
 from mosca.env.skate_env import (EnvConfig, RewardConfig, SkateVecEnv, attempt_seed, command_success,  # noqa: E402
@@ -103,6 +103,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--eval-speed", type=float, default=3.0)
     p.add_argument("--save-every", type=int, default=10)
     p.add_argument("--resume", action="store_true")
+    p.add_argument("--reset-std", action="store_true",
+                   help="na retomada, volta o desvio do ruído de exploração para --init-std")
     p.add_argument("--capture", action="store_true", help="grava as tentativas para re-simulação (M5/M6)")
     p.add_argument("--init-from", default="", help="checkpoint do conectoma que anda (m4_distill.py)")
     p.add_argument("--substeps", type=int, default=2, help="subpassos de RK4 por passo de controle (10 ms)")
@@ -149,30 +151,6 @@ def evaluate(env, pol, speed: float, yaw: float = 0.0) -> dict:
     eps = env.episode_stats()
     return {f"eval_{k}": float(np.nanmean([e[k] for e in eps]))
             for k in ("speed", "rolling", "glide_frac", "fell", "seconds", "grounded_frac", "cot", "yaw_error")}
-
-
-def load_walking(pol: ConnectomePolicy, path: str, device) -> int:
-    """Copia do conectoma que anda o que vale nos dois corpos (ver a documentação do módulo)."""
-    src = torch.load(path, weights_only=False, map_location=device)
-    weights = dict(src["policy"])
-    if src.get("ema"):
-        weights.update({k: v.to(device) for k, v in src["ema"].items()})
-    own = pol.state_dict()
-    fixed = {"net.tau0", "net.a0", "net.theta0", "net.r_max"}
-    skip = fixed | {k for k in own if k.startswith("dec_") or k == "log_std"}
-    copied = {k: v for k, v in weights.items() if k in own and own[k].shape == v.shape and k not in skip}
-    own.update(copied)
-    pol.load_state_dict(own)
-    # Decodificador: ganho de cada ligação (motor, saída) presente nos dois corpos.
-    walk_pairs = {(int(m), int(o)): i for i, (m, o) in enumerate(zip(weights["dec_motor"].tolist(), weights["dec_out"].tolist()))}
-    n_dec = 0
-    with torch.no_grad():
-        for i, (m, o) in enumerate(zip(pol.dec_motor.tolist(), pol.dec_out.tolist())):
-            j = walk_pairs.get((int(m), int(o)))
-            if j is not None and bool(pol.dec_free[i]) == bool(weights["dec_free"][j]):
-                pol.dec_raw[i] = weights["dec_raw"][j]
-                n_dec += 1
-    return len(copied) + n_dec
 
 
 def main() -> None:
@@ -231,6 +209,10 @@ def main() -> None:
         state = ckpt["state"]
         state.setdefault("yaw_max", 0.0)
         print(f"retomando da iteração {state['it']}")
+        if args.reset_std:
+            with torch.no_grad():
+                pol.log_std.fill_(float(np.log(args.init_std)))
+            print(f"desvio do ruído de exploração redefinido para {args.init_std:g}")
     else:
         if args.init_from:
             print(f"partindo de {args.init_from}: {load_walking(pol, args.init_from, device)} tensores/ganhos copiados")

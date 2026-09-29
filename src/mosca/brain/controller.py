@@ -270,3 +270,29 @@ class ConnectomePolicy(nn.Module):
         """Um passo de controle: devolve o novo estado (N, lote) e a ação média (lote, 42)."""
         r = self.step_net(r, self.currents(obs, v_cmd))
         return r, self.decode(r)
+
+
+def load_walking(pol: ConnectomePolicy, path: str, device) -> int:
+    """Copia do conectoma que anda (checkpoint do m4_distill.py) o que vale nos dois corpos: a rede, os
+    codificadores, o tônus e os ganhos de comando; no decodificador, o ganho de cada ligação neurônio
+    motor → junta que existe nos dois corpos. Devolve quantos tensores/ganhos foram copiados."""
+    src = torch.load(path, weights_only=False, map_location=device)
+    weights = dict(src["policy"])
+    if src.get("ema"):
+        weights.update({k: v.to(device) for k, v in src["ema"].items()})
+    own = pol.state_dict()
+    fixed = {"net.tau0", "net.a0", "net.theta0", "net.r_max"}
+    skip = fixed | {k for k in own if k.startswith("dec_") or k == "log_std"}
+    copied = {k: v for k, v in weights.items() if k in own and own[k].shape == v.shape and k not in skip}
+    own.update(copied)
+    pol.load_state_dict(own)
+    # Decodificador: ganho de cada ligação (motor, saída) presente nos dois corpos.
+    walk_pairs = {(int(m), int(o)): i for i, (m, o) in enumerate(zip(weights["dec_motor"].tolist(), weights["dec_out"].tolist()))}
+    n_dec = 0
+    with torch.no_grad():
+        for i, (m, o) in enumerate(zip(pol.dec_motor.tolist(), pol.dec_out.tolist())):
+            j = walk_pairs.get((int(m), int(o)))
+            if j is not None and bool(pol.dec_free[i]) == bool(weights["dec_free"][j]):
+                pol.dec_raw[i] = weights["dec_raw"][j]
+                n_dec += 1
+    return len(copied) + n_dec
