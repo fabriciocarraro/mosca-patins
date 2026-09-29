@@ -95,8 +95,11 @@ cada etapa está no README.
   espelhados, patas trocadas em ângulo absoluto: nas direitas, os eixos são o espelho dos das
   esquerdas, conferido pelas garras) e taxa 3× menor, 97% das retas contam. O DAgger piora depois
   de ~20 iterações (erro sobe, aluno cai): use `--ema`, pegue o best.pt e rode `m4_eval.py`.
-- Treinos no Spark já travaram em `torch.save` (dois ao mesmo tempo, esperando num futex, com o
-  latest.tmp pela metade): o monitor precisa acusar checkpoint parado, e `--resume` retoma.
+- Treinos no Spark já travaram em `torch.save` (esperando num futex, com o latest.tmp pela metade; aconteceu
+  com dois treinos ao mesmo tempo e também com um só, o evolui_b na geração 559): o monitor precisa acusar
+  checkpoint parado, e `--resume` retoma. No Spark, `runs/supervise.sh EXECUÇÃO SCRIPT_DE_RETOMADA` faz isso
+  sozinho (checkpoint parado há 15 min com o processo vivo: mata e retoma). Não rode `pgrep -f` com o padrão
+  dentro do próprio comando ssh: ele casa com o bash do ssh e o `kill` derruba a sessão (código 127).
 - M6, primeiro teste (patina_a: PPO de patins partindo do conectoma que anda): de patins, ele cai em
   55–70% das tentativas de 5 s (a "Tentativa #1" do plano). Com ganhos por ligação, a divergência KL
   passou do alvo já na primeira época em toda iteração e a taxa caiu ao piso: o grupo "sinapses"
