@@ -160,14 +160,15 @@ def replay(cap: IterationCapture, index: int, env_cfg: EnvConfig, on_step=None, 
 
 
 def replay_brain(cap: IterationCapture, env_cfg: EnvConfig, policy, noise_seed: int, beta: float,
-                 on_step=None) -> np.ndarray:
+                 on_step=None, population: dict | None = None, action_noise: bool = True) -> np.ndarray:
     """Re-simula a leva inteira da iteração como na coleta: a física segue as ações gravadas e o
     cérebro (a versão da política usada na coleta) recebe as observações que ela produz, com o mesmo
     lote. Cada ação é recalculada como na coleta (média + desvio × ruído refeito da semente).
 
     Devolve, por tentativa, a maior diferença entre a ação recalculada e a gravada enquanto a
     tentativa estava viva. `on_step(env, t, r, mean)` recebe o estado da rede (N, lote) depois de
-    cada passo de controle (para o painel do cérebro).
+    cada passo de controle (para o painel do cérebro). Estratégias evolutivas: `population` são as
+    variações de cada tentativa (`ConnectomePolicy.set_population`) e `action_noise=False` (a ação é a média).
     """
     env = SkateVecEnv(EnvConfig(**{**env_cfg.__dict__, "n_envs": len(cap.attempts)}))
     if cap.glide_friction is not None:
@@ -179,15 +180,17 @@ def replay_brain(cap: IterationCapture, env_cfg: EnvConfig, policy, noise_seed: 
     v_cmd = torch.as_tensor(np.asarray(cap.v_cmd), dtype=torch.float32, device=device)
     r = policy.initial_state(env.n)
     worst = np.zeros(env.n)
+    policy.set_population(population)
     with torch.no_grad():
         for t in range(len(cap.actions)):
             alive = env.alive.copy()
             r, mean = policy(r, torch.as_tensor(np.asarray(obs), dtype=torch.float32, device=device), v_cmd)
-            action = (mean + std * noise.step()).cpu().numpy()
+            action = (mean + std * noise.step() if action_noise else mean).cpu().numpy()
             worst = np.maximum(worst, np.where(alive, np.abs(action - cap.actions[t]).max(axis=1), 0.0))
             if on_step is not None:
                 on_step(env, t, r, mean)
             env.set_commands(yaw_cmd=cap.yaw_at(t))
             obs, *_ = env.step(cap.actions[t])
+    policy.set_population(None)
     env.close()
     return worst

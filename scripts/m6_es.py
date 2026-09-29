@@ -31,7 +31,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from mosca.brain.controller import ConnectomePolicy, ControllerConfig, load_walking  # noqa: E402
 from mosca.brain.graph import Connectome  # noqa: E402
-from mosca.capture import library_versions  # noqa: E402
+from mosca.capture import Recorder, library_versions  # noqa: E402
 from mosca.env.skate_env import EnvConfig, RewardConfig, SkateVecEnv, attempt_seed, command_success  # noqa: E402
 from mosca.paths import MALECNS_DIR, RUNS  # noqa: E402
 from mosca.rl.es import PopulationES  # noqa: E402
@@ -54,6 +54,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--graph", default=str(MALECNS_DIR / "controller_graph_min5.npz"))
     p.add_argument("--net-dtype", choices=("float32", "float64"), default="float32")
+    p.add_argument("--deterministic", action="store_true",
+                   help="controlador determinístico (exige --net-dtype float64): a re-simulação do cérebro reproduz a coleta")
+    p.add_argument("--capture", action="store_true",
+                   help="grava cada tentativa (ações, estados) e a média dos parâmetros de cada geração (M5/M6)")
     p.add_argument("--episode-seconds", type=float, default=5.0)
     p.add_argument("--control-dt", type=float, default=0.01)
     p.add_argument("--action-scale", type=float, default=0.15)
@@ -90,18 +94,24 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def run_episodes(env, pol, attempts, v_cmd, offsets=None) -> list[dict]:
-    """Uma leva de tentativas com a ação média; `offsets`: uma variação da mosca por ambiente."""
+def run_episodes(env, pol, attempts, v_cmd, offsets=None, record: int | None = None):
+    """Uma leva de tentativas com a ação média; `offsets`: uma variação da mosca por ambiente. Com
+    `record` (nº da geração), devolve também a captura da leva."""
     pol.set_population(offsets)
     obs, _ = env.reset(attempts, v_cmd)
+    recorder = None if record is None else Recorder(env, record, attempts, v_cmd, np.zeros(env.n))
     r = pol.initial_state(env.n)
     v = torch.as_tensor(v_cmd, dtype=torch.float32, device=pol.device)
     with torch.no_grad():
         while env.alive.any():
             r, mean = pol(r, torch.as_tensor(obs, dtype=torch.float32, device=pol.device), v)
-            obs, *_ = env.step(mean.cpu().numpy())
+            action = mean.cpu().numpy()
+            if recorder is not None:
+                recorder.before_step(action)
+            obs, *_ = env.step(action)
     pol.set_population(None)
-    return env.episode_stats()
+    episodes = env.episode_stats()
+    return (episodes, recorder.finish() if recorder is not None else None) if record is not None else episodes
 
 
 def main() -> None:
@@ -123,7 +133,7 @@ def main() -> None:
                                 all_synapse_gains=True, haltere_input=True, haltere_scale=args.haltere_scale,
                                 haltere_offset=args.haltere_offset, turn_cells=tuple(args.turn_cells.split(",")),
                                 turn_gain=args.turn_gain, enc_std=args.enc_std, dec_gain=args.dec_gain,
-                                seed=args.seed, net_dtype=args.net_dtype)
+                                seed=args.seed, net_dtype=args.net_dtype, deterministic=args.deterministic)
     env = SkateVecEnv(env_cfg)
     pol = ConnectomePolicy(Connectome.load(Path(args.graph)), ctrl_cfg, device=device)
     for q in pol.parameters():
@@ -153,7 +163,7 @@ def main() -> None:
             pol.calibrate_rest(torch.as_tensor(obs_rest[:8], dtype=torch.float32, device=device), 0.65 * args.v_start)
     if not args.probe and not (run_dir / "config.json").exists():
         (run_dir / "config.json").write_text(json.dumps(
-            {"args": vars(args), "env": asdict(env_cfg), "controller": asdict(ctrl_cfg), "es_dim": es.dim,
+            {"args": vars(args), "env": asdict(env_cfg), "controller": asdict(ctrl_cfg), "neurons": pol.n, "es_dim": es.dim,
              "sigma": es.sigma, "versions": library_versions()}, indent=2), encoding="utf-8")
     n = env.n
     print(f"estratégias evolutivas: população {n}, {es.dim:,} parâmetros variados "
@@ -185,7 +195,13 @@ def main() -> None:
         v_pair = rng.uniform(0.3 * v_max, v_max, n // 2)
         v_cmd = np.concatenate([v_pair, v_pair])  # os dois membros de cada par antitético com o mesmo pedido
         eps = es.sample(gen, n)
-        episodes = run_episodes(env, pol, attempts, v_cmd, es.offsets(eps, device))
+        if args.capture:  # a média desta geração; a variação de cada tentativa sai da semente (es.sample)
+            (run_dir / "capture").mkdir(exist_ok=True)
+            torch.save(pol.state_dict(), run_dir / "capture" / f"policy_it{gen:05d}.pt")
+            episodes, cap = run_episodes(env, pol, attempts, v_cmd, es.offsets(eps, device), record=gen)
+            cap.save(run_dir / "capture" / f"it{gen:05d}.npz")
+        else:
+            episodes = run_episodes(env, pol, attempts, v_cmd, es.offsets(eps, device))
         ret = np.array([e["return"] for e in episodes])
         grad_norm = es.step(eps, ret)
         success = command_success(episodes, env.max_steps)  # da população perturbada (só registro)

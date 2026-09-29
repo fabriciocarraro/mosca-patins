@@ -88,7 +88,12 @@ def main() -> None:
     if not graph_path.exists():
         graph_path = MALECNS_DIR / graph_path.name
     pol = ConnectomePolicy(Connectome.load(graph_path), ctrl_cfg, device=device)
-    beta = noise_beta(env_cfg.control_dt, run_args["noise_tau"])
+    evolution = "es_dim" in manifest  # estratégias evolutivas: variação por tentativa, ação sem ruído
+    beta = 0.0 if evolution else noise_beta(env_cfg.control_dt, run_args["noise_tau"])
+    if evolution:
+        from mosca.rl.es import PopulationES
+
+        es = PopulationES(pol.es_parameters(), manifest["sigma"], 0.0, run_args["seed"])
 
     report, brain_cache = [], {}
     for attempt in chosen:
@@ -100,7 +105,9 @@ def main() -> None:
         phys = replay(cap, index, env_cfg)
         if it not in brain_cache:
             pol.load_state_dict(torch.load(pol_path, map_location=device, weights_only=True))
-            brain_cache[it] = replay_brain(cap, env_cfg, pol, attempt_seed(run_args["seed"], -1 - it), beta)
+            population = es.offsets(es.sample(it, n), device) if evolution else None
+            brain_cache[it] = replay_brain(cap, env_cfg, pol, attempt_seed(run_args["seed"], -1 - it), beta,
+                                           population=population, action_noise=not evolution)
         brain = float(brain_cache[it][index])
         ok = phys["max_deviation"] == 0.0 and brain < BRAIN_TOL
         report.append({"attempt": attempt, "iteration": it, "env": index, "physics_max_deviation": phys["max_deviation"],
