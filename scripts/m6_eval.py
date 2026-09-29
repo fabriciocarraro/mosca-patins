@@ -172,7 +172,11 @@ def main() -> None:
 
     if args.probes:
         dng100 = torch.as_tensor(np.concatenate([graph.groups["DNg100_L"], graph.groups["DNg100_R"]]), device=device)
-        quiet = run(env, pol, args.speed, yaw, noise(), silence=dng100)
+        # Calar = inibir o tempo todo (corrente muito negativa, como a inibição optogenética): zerar a taxa só
+        # no fim de cada passo de controle deixa o neurônio disparar nos subpassos de RK4 do passo seguinte.
+        inhibit = torch.zeros(pol.n, n, device=device)
+        inhibit[dng100] = -1e4
+        quiet = run(env, pol, args.speed, yaw, noise(), silence=dng100, extra_current=inhibit)
         print(f"\nDNg100 calados: {np.mean([e['speed'] for e in quiet]):.2f} cm/s "
               f"(sem intervenção {np.mean([e['speed'] for e in base]):.2f}); quedas {np.mean([e['fell'] for e in quiet]):.0%}")
         sides = np.where(np.arange(n) % 2 == 0, 1.0, -1.0)

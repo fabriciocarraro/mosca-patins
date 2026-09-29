@@ -153,4 +153,8 @@ cada etapa está no README.
   (64 amostras em 14 mil dimensões) e saía do ponto que andava. O currículo precisa ser julgado pela avaliação
   da média (a população perturbada acerta 5–9%), e o `--yaw-filtered` tirou a mosca dos círculos. Na geração
   365 cumpre o critério do M2 (3,5 cm/s pedidos: 3,24 de média, 95% ≥3, 45% deslizando, 0% de quedas), mas
-  com ~6,6× os passos da MLP, e sem `--p-stand` a patinação não depende do DNg100 (calado: 3,24 → 2,40).
+  com ~6,6× os passos da MLP. Pedindo 0 cm/s ela patinava a 1,5 cm/s até entrar `--p-stand 0.3` com testes de
+  parada no acerto do currículo (e o ganho do DNg100 entre os parâmetros evoluídos): aí para em 75–88%.
+- Para calar um neurônio com controle a 10 ms, inibir com corrente muito negativa (`m6_eval.py --probes`):
+  zerar a taxa só no fim de cada passo deixa o neurônio disparar nos 5 subpassos de RK4 seguintes (com isso,
+  o DNg100 "calado" ainda dava 2,4–2,6 cm/s; inibido, 0,29 cm/s contra 3,52, na geração 448 do evolui_b).
