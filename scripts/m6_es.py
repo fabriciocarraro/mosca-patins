@@ -146,10 +146,10 @@ def main() -> None:
         obs_rest, _ = env.reset(np.arange(env.n) + 10**8, np.full(env.n, args.v_start))
         with torch.no_grad():
             pol.calibrate_rest(torch.as_tensor(obs_rest[:8], dtype=torch.float32, device=device), 0.65 * args.v_start)
-        if not args.probe:
-            (run_dir / "config.json").write_text(json.dumps(
-                {"args": vars(args), "env": asdict(env_cfg), "controller": asdict(ctrl_cfg), "es_dim": es.dim,
-                 "sigma": es.sigma, "versions": library_versions()}, indent=2), encoding="utf-8")
+    if not args.probe and not (run_dir / "config.json").exists():
+        (run_dir / "config.json").write_text(json.dumps(
+            {"args": vars(args), "env": asdict(env_cfg), "controller": asdict(ctrl_cfg), "es_dim": es.dim,
+             "sigma": es.sigma, "versions": library_versions()}, indent=2), encoding="utf-8")
     n = env.n
     print(f"estratégias evolutivas: população {n}, {es.dim:,} parâmetros variados "
           f"({', '.join(f'{k} {v.numel()}' for k, v in params.items())})")
@@ -200,8 +200,15 @@ def main() -> None:
             metrics.update(eval_v_cmd=speed, eval_speed=float(np.mean([e["speed"] for e in ev])),
                            eval_glide=float(np.mean([e["glide_frac"] for e in ev])),
                            eval_fell=float(np.mean([e["fell"] for e in ev])))
+            score = metrics["eval_speed"] * (1 - metrics["eval_fell"]) * speed / max(speed, 1e-9)
+            best = score > state.get("best_score", -1.0)
             print(f"      avaliação da média a {speed:g} cm/s: vel {metrics['eval_speed']:.2f}, desliza "
-                  f"{metrics['eval_glide']:.2f}, quedas {metrics['eval_fell']:.0%}", flush=True)
+                  f"{metrics['eval_glide']:.2f}, quedas {metrics['eval_fell']:.0%}" + (" (melhor até agora)" if best else ""),
+                  flush=True)
+            if best:
+                state["best_score"], state["best_gen"] = score, gen + 1
+                torch.save({"policy": pol.state_dict(), "state": state, "controller": asdict(ctrl_cfg),
+                            "env_cfg": asdict(env_cfg), "args": vars(args)}, run_dir / "best.pt")
         with open(run_dir / "metrics.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(metrics) + "\n")
         with open(run_dir / "attempts.jsonl", "a", encoding="utf-8") as f:
