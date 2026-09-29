@@ -149,3 +149,8 @@ cada etapa está no README.
   --sigma-enc 1 --sigma-dec-raw 0.2 --sigma-dec-bias 0.1`), a média da população anda 1,6 cm/s pedindo 2
   já na geração 9 (evolui_a). Comece o currículo em `--v-start 2`: pedindo 0,3–1 cm/s, ficar parada paga
   parte da recompensa de velocidade e as variações evoluem para ficar em pé melhor.
+- evolui_b (a partir da geração 11 do evolui_a, `--lr 0.05`): com `--lr 0.3` a média fazia um passeio aleatório
+  (64 amostras em 14 mil dimensões) e saía do ponto que andava. O currículo precisa ser julgado pela avaliação
+  da média (a população perturbada acerta 5–9%), e o `--yaw-filtered` tirou a mosca dos círculos. Na geração
+  365 cumpre o critério do M2 (3,5 cm/s pedidos: 3,24 de média, 95% ≥3, 45% deslizando, 0% de quedas), mas
+  com ~6,6× os passos da MLP, e sem `--p-stand` a patinação não depende do DNg100 (calado: 3,24 → 2,40).
