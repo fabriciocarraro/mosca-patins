@@ -74,6 +74,9 @@ class EnvConfig:
     min_height: float = 0.07  # cm
     max_tilt_deg: float = 60.0
     seed: int = 0
+    # Atrito ao longo dos patins (0 = o do modelo, 0,01). Perto do de lado (1,0), os patins ficam travados e
+    # se comportam como pés; o treino pode soltá-los aos poucos (set_glide_friction, gravado na captura).
+    glide_friction: float = 0.0
     reward: RewardConfig = field(default_factory=RewardConfig)
 
 
@@ -129,6 +132,10 @@ class SkateVecEnv:
             mujoco.mj_step(m, rest)
         rest.qpos[:2] = 0.0
         self.rest = (rest.qpos.copy(), rest.qvel.copy(), rest.act.copy(), rest.ctrl.copy())
+        # A postura de partida é assentada com o atrito do modelo; o atrito ao longo dos patins vem depois.
+        self.skate_pairs = np.array([i for i in range(m.npair) if m.pair(i).name.startswith("floor_skate_runner")])
+        self.default_glide_friction = float(m.pair_friction[self.skate_pairs[0], 0])
+        self.set_glide_friction(cfg.glide_friction if cfg.glide_friction > 0 else self.default_glide_friction)
 
         names = [f"{j}_{leg}" for leg in LEGS for j in LEG_JOINTS]
         self.leg_act = np.array([m.actuator(n).id for n in names])
@@ -213,6 +220,11 @@ class SkateVecEnv:
         for i in range(self.n):
             obs[i], priv[i], *_ = self._measure(i, np.zeros(self.act_dim), update=False)
         return obs, priv
+
+    def set_glide_friction(self, mu: float) -> None:
+        """Atrito ao longo dos patins (o de lado não muda), para todos os ambientes a partir do próximo passo."""
+        self.model.pair_friction[self.skate_pairs, 0] = mu
+        self.glide_friction = float(mu)
 
     def set_commands(self, yaw_cmd: np.ndarray | None = None) -> None:
         """Troca o giro pedido (rad/s) a partir do próximo passo: vale para a recompensa desse passo e

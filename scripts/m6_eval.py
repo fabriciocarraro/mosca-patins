@@ -61,12 +61,14 @@ def load(path: str, device, control_dt: float = 0.0, substeps: int = 0) -> tuple
     return pol, graph, ckpt, ckpt["args"]
 
 
-def make_env(ckpt: dict, n: int, threads: int, seconds: float = 0.0) -> SkateVecEnv:
+def make_env(ckpt: dict, n: int, threads: int, seconds: float = 0.0, glide_friction: float = 0.0) -> SkateVecEnv:
     cfg = dict(ckpt["env_cfg"])
     cfg["reward"] = RewardConfig(**cfg["reward"])
     cfg.update(n_envs=n, n_threads=threads)
     if seconds > 0:
         cfg["episode_seconds"] = seconds
+    if glide_friction > 0:
+        cfg["glide_friction"] = glide_friction
     return SkateVecEnv(EnvConfig(**cfg))
 
 
@@ -118,6 +120,8 @@ def main() -> None:
     p.add_argument("--probes", action="store_true", help="provas causais (DNg100 calado, DNa02 de um lado)")
     p.add_argument("--slalom", action="store_true", help="percurso de teste com o piloto externo")
     p.add_argument("--seconds", type=float, default=0.0, help="duração das tentativas (s; padrão: a do treino)")
+    p.add_argument("--glide-friction", type=float, default=0.0,
+                   help="atrito ao longo dos patins (padrão: o do treino; ~1 trava os patins)")
     p.add_argument("--control-dt", type=float, default=0.0, help="troca o passo de controle do treino (s)")
     p.add_argument("--substeps", type=int, default=0, help="troca os subpassos de RK4 por passo de controle")
     p.add_argument("--threads", type=int, default=8)
@@ -135,7 +139,8 @@ def main() -> None:
     pol, graph, ckpt, train_args = load(args.checkpoint, device, args.control_dt, args.substeps)
     state = ckpt["state"]
     n = args.tests
-    env = make_env(ckpt, n, args.threads, args.seconds)
+    env = make_env(ckpt, n, args.threads, args.seconds, args.glide_friction)
+    print(f"atrito ao longo dos patins: {env.glide_friction:g}")
     course = Slalom() if args.slalom else None
     yaw = np.where(np.arange(n) % 2 == 0, args.yaw, -args.yaw)
     beta = noise_beta(env.cfg.control_dt, train_args.get("noise_tau", 0.05))
@@ -183,7 +188,7 @@ def main() -> None:
     if args.gif or args.sheet:
         from PIL import Image, ImageDraw
 
-        env = make_env(ckpt, 1, 1, args.seconds)
+        env = make_env(ckpt, 1, 1, args.seconds, args.glide_friction)
         renderer = mujoco.Renderer(env.model, height=480, width=854)
         cam = mujoco.MjvCamera()
         cam.type, cam.trackbodyid = mujoco.mjtCamera.mjCAMERA_TRACKING, env.thorax

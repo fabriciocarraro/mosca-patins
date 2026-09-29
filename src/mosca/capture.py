@@ -76,6 +76,7 @@ class IterationCapture:
     qpos: np.ndarray  # (K, n, nq) estado da física a cada checkpoint_every passos (antes do passo)
     qvel: np.ndarray  # (K, n, nv)
     yaw_cmd: np.ndarray | None = None  # (T, n) giro pedido em cada passo (None nas capturas antigas: sempre 0)
+    glide_friction: float | None = None  # atrito ao longo dos patins na leva (None nas antigas: o do modelo)
 
     def yaw_at(self, t: int) -> np.ndarray:
         return np.zeros(len(self.attempts)) if self.yaw_cmd is None else self.yaw_cmd[t]
@@ -84,6 +85,8 @@ class IterationCapture:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_name(path.stem + ".tmp.npz")
         extra = {} if self.yaw_cmd is None else {"yaw_cmd": self.yaw_cmd}
+        if self.glide_friction is not None:
+            extra["glide_friction"] = self.glide_friction
         np.savez_compressed(tmp, iteration=self.iteration, attempts=self.attempts, v_cmd=self.v_cmd, push=self.push,
                             steps=self.steps, actions=self.actions, checkpoint_every=self.checkpoint_every,
                             qpos=self.qpos, qvel=self.qvel, **extra)
@@ -94,7 +97,8 @@ class IterationCapture:
         z = np.load(path, allow_pickle=False)
         return IterationCapture(int(z["iteration"]), z["attempts"], z["v_cmd"], z["push"], z["steps"], z["actions"],
                                 int(z["checkpoint_every"]), z["qpos"], z["qvel"],
-                                z["yaw_cmd"] if "yaw_cmd" in z.files else None)
+                                z["yaw_cmd"] if "yaw_cmd" in z.files else None,
+                                float(z["glide_friction"]) if "glide_friction" in z.files else None)
 
 
 class Recorder:
@@ -120,7 +124,7 @@ class Recorder:
     def finish(self) -> IterationCapture:
         return IterationCapture(self.iteration, self.attempts, self.v_cmd, self.push, self.env.steps.copy(),
                                 self.actions[: self.t], self.every, np.array(self.qpos), np.array(self.qvel),
-                                self.yaw[: self.t].copy())
+                                self.yaw[: self.t].copy(), self.env.glide_friction)
 
 
 def replay(cap: IterationCapture, index: int, env_cfg: EnvConfig, on_step=None, on_substep=None) -> dict:
@@ -132,6 +136,8 @@ def replay(cap: IterationCapture, index: int, env_cfg: EnvConfig, on_step=None, 
     """
     cfg = EnvConfig(**{**env_cfg.__dict__, "n_envs": 1, "n_threads": 1})
     env = SkateVecEnv(cfg)
+    if cap.glide_friction is not None:
+        env.set_glide_friction(cap.glide_friction)
     env.reset(cap.attempts[index : index + 1], cap.v_cmd[index : index + 1], cap.push[index : index + 1],
               cap.yaw_at(0)[index : index + 1])
     step = {"t": 0}
@@ -164,6 +170,8 @@ def replay_brain(cap: IterationCapture, env_cfg: EnvConfig, policy, noise_seed: 
     cada passo de controle (para o painel do cérebro).
     """
     env = SkateVecEnv(EnvConfig(**{**env_cfg.__dict__, "n_envs": len(cap.attempts)}))
+    if cap.glide_friction is not None:
+        env.set_glide_friction(cap.glide_friction)
     obs, _ = env.reset(cap.attempts, cap.v_cmd, cap.push, cap.yaw_at(0))
     device = policy.device
     noise = ColoredNoise(noise_seed, (env.n, env.act_dim), beta, device)

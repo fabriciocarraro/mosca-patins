@@ -139,3 +139,7 @@ cada etapa está no README.
   em ~2 depois de 17 épocas (melhor 1,96): nem treinado ele imita a MLP melhor que a média das ações (no
   M4, 0,27). De patins, o conectoma que anda fica parado num ponto fixo (rede ativa, ~22 Hz nos motores),
   também com controle a 2 ms; o ruído de 1,0 derruba ~20% das tentativas (0,6: 2–3%).
+- Patins travados (`--glide-friction 1`, atrito ao longo = de lado): o conectoma que anda também fica
+  parado (0,07–0,09 cm/s, a 10 ms ou a 2 ms de controle). A caminhada do M4 não passa para o corpo de
+  patins (botas no lugar de tarsos e garras, sem adesão), então soltar os patins aos poucos não parte de
+  um andar.
