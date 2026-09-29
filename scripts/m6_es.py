@@ -73,6 +73,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sigma-dec-raw", type=float, default=0.1, help="σ dos log-ganhos do decodificador")
     p.add_argument("--sigma-dec-bias", type=float, default=0.05, help="σ do viés do decodificador (ação)")
     p.add_argument("--sigma-walk", type=float, default=0.2, help="σ do log-ganho do comando de velocidade (DNg100)")
+    p.add_argument("--sigma-turn", type=float, default=0.2, help="σ do log-ganho do comando de giro (DNa02)")
     p.add_argument("--eval-every", type=int, default=10)
     p.add_argument("--eval-speed", type=float, default=4.0, help="teto da velocidade da avaliação (padrão: a do currículo)")
     p.add_argument("--p-stand", type=float, default=0.0,
@@ -158,7 +159,7 @@ def main() -> None:
         q.requires_grad_(True)
     sig = {"log_a": args.sigma_type, "log_theta": args.sigma_type, "log_tau": args.sigma_type,
            "motor_bias": args.sigma_tone, "dec_raw": args.sigma_dec_raw, "dec_bias": args.sigma_dec_bias,
-           "halt_b": args.sigma_enc, "log_walk_gain": args.sigma_walk,
+           "halt_b": args.sigma_enc, "log_walk_gain": args.sigma_walk, "log_turn_gain": args.sigma_turn,
            **{f"enc_b_{k}": args.sigma_enc for k in range(6)}}
     es = PopulationES(params, {k: sig[k] for k in params}, args.lr, args.seed)
     state = {"gen": 0, "v_max": args.v_start, "yaw_max": args.yaw_start, "attempts": 0, "steps": 0}
