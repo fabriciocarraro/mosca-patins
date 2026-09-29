@@ -25,7 +25,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from mosca.brain.controller import ConnectomePolicy, ControllerConfig, load_walking  # noqa: E402
+from mosca.brain.controller import ConnectomePolicy, ControllerConfig, leg_feature_index, load_walking  # noqa: E402
 from mosca.brain.graph import Connectome  # noqa: E402
 from mosca.env.skate_env import EnvConfig, RewardConfig, SkateVecEnv  # noqa: E402
 from mosca.paths import MALECNS_DIR  # noqa: E402
@@ -55,7 +55,69 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device", default="cpu")
     p.add_argument("--threads", type=int, default=8)
     p.add_argument("--out", default="")
+    p.add_argument("--ceiling", action="store_true",
+                   help="só o teto linear: regressão das ações da professora a partir de cada camada do conectoma "
+                        "(sentidos crus, proprioceptores, motores, amostra da rede), sem treinar")
     return p.parse_args()
+
+
+def ridge_ceiling(layers: dict, target: np.ndarray, valid: np.ndarray, tr: np.ndarray, te: np.ndarray) -> dict:
+    """1 − R² no teste da melhor regressão linear (crista, λ escolhido em tentativas de validação)."""
+    fit, val = tr[: max(1, len(tr) * 3 // 4)], tr[max(1, len(tr) * 3 // 4):]
+    out = {}
+    for name, x in layers.items():
+        def rows(idx):
+            return x[:, idx][valid[:, idx]], target[:, idx][valid[:, idx]]
+        xf, yf = rows(fit)
+        mu, sd = xf.mean(0), xf.std(0) + 1e-6
+        z = (xf - mu) / sd
+        zb = np.hstack([z, np.ones((len(z), 1))])
+        gram, rhs = zb.T @ zb, zb.T @ yf
+        best = None
+        for lam in (1e-2, 1e0, 1e2, 1e4):
+            w = np.linalg.solve(gram + lam * len(z) / 1e3 * np.eye(len(gram)), rhs)
+            xv, yv = rows(val)
+            err = nmse(np.hstack([(xv - mu) / sd, np.ones((len(xv), 1))]) @ w, yv, np.ones(len(yv), bool))
+            if best is None or err < best[0]:
+                best = (err, w)
+        xt, yt = rows(te)
+        out[name] = nmse(np.hstack([(xt - mu) / sd, np.ones((len(xt), 1))]) @ best[1], yt, np.ones(len(yt), bool))
+    return out
+
+
+def decoder_ceiling(pol, rates, pos, target, valid, tr, te, any_sign: bool = False, whole_leg: bool = False) -> float:
+    """Teto com a estrutura do decodificador: cada saída só lê os motores ligados a ela, com o sinal
+    fixo pelo músculo (os sem músculo identificado, qualquer sinal) e um viés livre (mínimos quadrados
+    não negativos por saída). `any_sign`: qualquer sinal em todas as ligações; `whole_leg`: cada saída
+    lê todos os motores da própria pata (com qualquer sinal)."""
+    from scipy.optimize import nnls
+
+    motor = pol.dec_motor.cpu().numpy()
+    out_idx = pol.dec_out.cpu().numpy()
+    sign = pol.dec_sign.cpu().numpy()
+    free = pol.dec_free.cpu().numpy()
+    x_tr, x_te = rates[:, tr][valid[:, tr]], rates[:, te][valid[:, te]]
+    y_tr, y_te = target[:, tr][valid[:, tr]], target[:, te][valid[:, te]]
+    pred = np.zeros_like(y_te)
+    n_joints = target.shape[-1] // 6
+    for j in range(target.shape[-1]):
+        if whole_leg:
+            leg_outs = np.arange(j // n_joints * n_joints, (j // n_joints + 1) * n_joints)
+            ms = np.unique(motor[np.isin(out_idx, leg_outs)])
+            cols, s_, fr = [pos[m] for m in ms], np.ones(len(ms)), np.ones(len(ms), bool)
+        else:
+            sel = np.flatnonzero(out_idx == j)
+            cols = [pos[m] for m in motor[sel]]
+            fr = np.ones(len(sel), bool) if any_sign else free[sel]
+            s_ = np.where(fr, 1.0, sign[sel])
+        a_tr, a_te = x_tr[:, cols] * s_, x_te[:, cols] * s_
+        extra_tr, extra_te = -a_tr[:, fr], -a_te[:, fr]  # livres: as duas direções
+        scale = np.abs(a_tr).max(0).clip(1e-6) if a_tr.size else np.ones(0)
+        m_tr = np.hstack([a_tr / scale, extra_tr / scale[fr], np.ones((len(a_tr), 1)), -np.ones((len(a_tr), 1))])
+        m_te = np.hstack([a_te / scale, extra_te / scale[fr], np.ones((len(a_te), 1)), -np.ones((len(a_te), 1))])
+        w, _ = nnls(m_tr, y_tr[:, j], maxiter=5000)
+        pred[:, j] = m_te @ w
+    return nmse(pred, y_te, np.ones(len(y_te), bool))
 
 
 def collect(env: SkateVecEnv, ac: ActorCritic, norm: RunningNorm, v_cmd: np.ndarray):
@@ -142,6 +204,34 @@ def main() -> None:
     obs_rest, _ = env.reset(np.arange(env.n) + 10**8, np.full(env.n, 1.0))
     pol.calibrate_rest(torch.as_tensor(obs_rest[:8], dtype=torch.float32, device=device), 0.65)
     env.close()
+    if args.ceiling:
+        rng = np.random.default_rng(2)
+        motors = pol.motors.cpu().numpy()
+        proprio = np.concatenate([getattr(pol, f"enc_neurons_{k}").cpu().numpy() for k in range(6)])
+        sample = rng.choice(pol.n, 2000, replace=False)
+        keep = np.unique(np.concatenate([motors, proprio, sample]))
+        pos = {i: j for j, i in enumerate(keep)}
+        rates = []
+        r = pol.initial_state(n)
+        v = torch.as_tensor(v_cmd, dtype=torch.float32, device=device)
+        with torch.no_grad():
+            for t in range(len(obs)):
+                r, _ = pol(r, torch.as_tensor(obs[t], device=device), v)
+                rates.append(r[torch.as_tensor(keep, device=device)].T.float().cpu().numpy())
+        rates = np.array(rates)  # (T, n, neurônios guardados)
+        feats = np.concatenate([leg_feature_index(k) for k in range(6)] + [np.arange(171, 174)])
+        layers = {"sentidos crus (entradas do codificador)": np.concatenate([obs[:, :, feats], np.repeat(v_cmd[None, :, None], len(obs), 0)], axis=2),
+                  "proprioceptores": rates[:, :, [pos[i] for i in proprio]],
+                  "motores": rates[:, :, [pos[i] for i in motors]],
+                  "amostra de 2000 neurônios": rates[:, :, [pos[i] for i in sample]]}
+        for tag, target in (("cru", act), ("filtrado", act_f)):
+            res = ridge_ceiling(layers, target, valid, tr, te)
+            res["motores pelo decodificador (sinal fixo)"] = decoder_ceiling(pol, rates, pos, target, valid, tr, te)
+            res["mesmas ligações, qualquer sinal"] = decoder_ceiling(pol, rates, pos, target, valid, tr, te, any_sign=True)
+            res["todos os motores da própria pata, qualquer sinal"] = decoder_ceiling(pol, rates, pos, target, valid, tr, te,
+                                                                                      whole_leg=True)
+            print(f"teto linear ({tag}): " + "; ".join(f"{k} {v:.3f}" for k, v in res.items()), flush=True)
+        return
     # A postura da professora é outra: o viés do decodificador começa na média das ações dela, e o erro
     # mede a parte que muda no tempo (com a taxa do treino, só o deslocamento levaria dezenas de épocas).
     pred = student_actions(pol, obs[:, tr], v_cmd[tr], device)

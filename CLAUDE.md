@@ -130,3 +130,11 @@ cada etapa está no README.
   ser estimada em 16 trechos; a média (`kl` no metrics.jsonl) fica em 0,005–0,016. Com passos coerentes a
   KL cresce com o quadrado do nº de passos, e a taxa cai sozinha até caber uma época (~7e-6 com os
   multiplicadores atuais). A norma do gradiente do ator antes do corte é ~1e8.
+- Teto linear para imitar a MLP patinadora (`m6_bc_probe.py --ceiling`: conectoma que anda com as
+  observações da MLP do M2, 1 − R² filtrado no teste): as ações dela são quase lineares nos sentidos das
+  patas (0,005). Lendo os motores: todos, livre, 0,25; só os da própria pata 0,74; pelo decodificador
+  anatômico (músculo → junta, sinal fixo) 0,88 (com qualquer sinal, 0,84). A informação está nos motores
+  das outras patas: o treino teria de reorganizar quais motores disparam em cada pata, e por isso o PPO
+  não tira a política média do ponto fixo. A imitação offline ponta a ponta caiu só de 31 para 14 em 8
+  épocas. De patins, o conectoma que anda fica parado num ponto fixo (rede ativa, ~22 Hz nos motores),
+  também com controle a 2 ms; o ruído de 1,0 derruba ~20% das tentativas (0,6: 2–3%).
