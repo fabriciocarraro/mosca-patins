@@ -32,7 +32,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from mosca.brain.controller import ConnectomePolicy, ControllerConfig, load_walking  # noqa: E402
 from mosca.brain.graph import Connectome  # noqa: E402
 from mosca.capture import Recorder, library_versions  # noqa: E402
-from mosca.env.skate_env import EnvConfig, RewardConfig, SkateVecEnv, attempt_seed, command_success  # noqa: E402
+from mosca.env.skate_env import (EnvConfig, RewardConfig, SkateVecEnv, attempt_seed, command_success,  # noqa: E402
+                                 yaw_schedule)
 from mosca.paths import MALECNS_DIR, RUNS  # noqa: E402
 from mosca.rl.es import PopulationES  # noqa: E402
 
@@ -72,7 +73,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sigma-dec-raw", type=float, default=0.1, help="σ dos log-ganhos do decodificador")
     p.add_argument("--sigma-dec-bias", type=float, default=0.05, help="σ do viés do decodificador (ação)")
     p.add_argument("--eval-every", type=int, default=10)
-    p.add_argument("--eval-speed", type=float, default=3.0)
+    p.add_argument("--eval-speed", type=float, default=4.0, help="teto da velocidade da avaliação (padrão: a do currículo)")
+    p.add_argument("--p-stand", type=float, default=0.0,
+                   help="fração dos pares que pede velocidade 0 (DNg100 sem corrente): calar o DNg100 passa a parar a mosca")
+    p.add_argument("--yaw-final", type=float, default=0.0,
+                   help="giro máximo pedido no fim do currículo (rad/s, só pelo DNa02); abre depois de --v-final")
+    p.add_argument("--yaw-step", type=float, default=0.25)
+    p.add_argument("--yaw-start", type=float, default=0.0, help="giro máximo no começo (rad/s)")
+    p.add_argument("--yaw-switch", type=float, default=1.5, help="duração média de cada trecho de giro (s)")
+    p.add_argument("--yaw-tol", type=float, default=0.5, help="erro médio de giro filtrado para a tentativa contar (rad/s)")
+    p.add_argument("--eval-yaw", type=float, default=1.0, help="giro das curvas da avaliação (rad/s)")
     p.add_argument("--save-every", type=int, default=25)
     p.add_argument("--yaw-filtered", action="store_true",
                    help="recompensa de giro pelo giro médio de 200 ms (o instantâneo é dominado pelo balanço)")
@@ -94,18 +104,22 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def run_episodes(env, pol, attempts, v_cmd, offsets=None, record: int | None = None):
-    """Uma leva de tentativas com a ação média; `offsets`: uma variação da mosca por ambiente. Com
-    `record` (nº da geração), devolve também a captura da leva."""
+def run_episodes(env, pol, attempts, v_cmd, offsets=None, record: int | None = None, yaw: np.ndarray | None = None):
+    """Uma leva de tentativas com a ação média; `offsets`: uma variação da mosca por ambiente; `yaw`:
+    giro pedido a cada passo (passos, lote). Com `record` (nº da geração), devolve também a captura da leva."""
     pol.set_population(offsets)
-    obs, _ = env.reset(attempts, v_cmd)
+    obs, _ = env.reset(attempts, v_cmd, yaw_cmd=None if yaw is None else yaw[0])
     recorder = None if record is None else Recorder(env, record, attempts, v_cmd, np.zeros(env.n))
     r = pol.initial_state(env.n)
     v = torch.as_tensor(v_cmd, dtype=torch.float32, device=pol.device)
+    t = 0
     with torch.no_grad():
         while env.alive.any():
             r, mean = pol(r, torch.as_tensor(obs, dtype=torch.float32, device=pol.device), v)
             action = mean.cpu().numpy()
+            if yaw is not None:
+                env.set_commands(yaw_cmd=yaw[min(t, len(yaw) - 1)])
+            t += 1
             if recorder is not None:
                 recorder.before_step(action)
             obs, *_ = env.step(action)
@@ -145,7 +159,7 @@ def main() -> None:
            "motor_bias": args.sigma_tone, "dec_raw": args.sigma_dec_raw, "dec_bias": args.sigma_dec_bias,
            "halt_b": args.sigma_enc, **{f"enc_b_{k}": args.sigma_enc for k in range(6)}}
     es = PopulationES(params, {k: sig[k] for k in params}, args.lr, args.seed)
-    state = {"gen": 0, "v_max": args.v_start, "attempts": 0, "steps": 0}
+    state = {"gen": 0, "v_max": args.v_start, "yaw_max": args.yaw_start, "attempts": 0, "steps": 0}
     latest = run_dir / "latest.pt"
     if args.resume and latest.exists():
         ck = torch.load(latest, weights_only=False, map_location=device)
@@ -154,6 +168,7 @@ def main() -> None:
         for group, name in zip(es.opt.param_groups, es.params):  # a taxa da linha de comando vale na retomada
             group["lr"] = args.lr * es.sigma[name]
         state = ck["state"]
+        state.setdefault("yaw_max", 0.0)
         print(f"retomando da geração {state['gen']}")
     else:
         if args.init_from:
@@ -193,15 +208,20 @@ def main() -> None:
         rng = np.random.default_rng(attempt_seed(args.seed, -1 - gen))
         v_max = state["v_max"]
         v_pair = rng.uniform(0.3 * v_max, v_max, n // 2)
+        if args.p_stand > 0:  # pares mandados ficar parados
+            v_pair[rng.random(n // 2) < args.p_stand] = 0.0
         v_cmd = np.concatenate([v_pair, v_pair])  # os dois membros de cada par antitético com o mesmo pedido
+        yaw_max = state["yaw_max"]
+        yaw_pair = yaw_schedule(rng, n // 2, env.max_steps, yaw_max, args.yaw_switch / env_cfg.control_dt)
+        yaw = np.concatenate([yaw_pair, yaw_pair], axis=1) if yaw_max > 0 else None
         eps = es.sample(gen, n)
         if args.capture:  # a média desta geração; a variação de cada tentativa sai da semente (es.sample)
             (run_dir / "capture").mkdir(exist_ok=True)
             torch.save(pol.state_dict(), run_dir / "capture" / f"policy_it{gen:05d}.pt")
-            episodes, cap = run_episodes(env, pol, attempts, v_cmd, es.offsets(eps, device), record=gen)
+            episodes, cap = run_episodes(env, pol, attempts, v_cmd, es.offsets(eps, device), record=gen, yaw=yaw)
             cap.save(run_dir / "capture" / f"it{gen:05d}.npz")
         else:
-            episodes = run_episodes(env, pol, attempts, v_cmd, es.offsets(eps, device))
+            episodes = run_episodes(env, pol, attempts, v_cmd, es.offsets(eps, device), yaw=yaw)
         ret = np.array([e["return"] for e in episodes])
         grad_norm = es.step(eps, ret)
         success = command_success(episodes, env.max_steps)  # da população perturbada (só registro)
@@ -209,25 +229,35 @@ def main() -> None:
         state["attempts"] += n
         state["steps"] += int(sum(e["steps"] for e in episodes))
         sp = np.array([e["speed"] for e in episodes])
-        metrics = {"gen": gen, "attempts": state["attempts"], "v_max": v_max, "return_mean": float(ret.mean()),
+        metrics = {"gen": gen, "attempts": state["attempts"], "v_max": v_max, "yaw_max": yaw_max,
+                   "return_mean": float(ret.mean()),
                    "return_max": float(ret.max()), "speed_mean": float(sp.mean()), "speed_max": float(sp.max()),
                    "fell": float(np.mean([e["fell"] for e in episodes])), "success": success, "grad_norm": grad_norm,
                    "time": time.perf_counter() - t0}
         if args.eval_every and (gen + 1) % args.eval_every == 0:
             speed = min(args.eval_speed, state["v_max"])
-            ev = run_episodes(env, pol, TEST_ATTEMPT_BASE + np.arange(n), np.full(n, speed))
+            eval_yaw = min(args.eval_yaw, state["yaw_max"])
+            level = state["v_max"] + state["yaw_max"]  # nível do currículo nesta avaliação
+            yaw_tests = np.tile(np.array([0.0, eval_yaw, -eval_yaw])[np.arange(n) % 3], (env.max_steps, 1))
+            ev = run_episodes(env, pol, TEST_ATTEMPT_BASE + np.arange(n), np.full(n, speed),
+                              yaw=yaw_tests if eval_yaw > 0 else None)
             # Currículo pela média (a mosca sem perturbação): a velocidade pedida sobe com 80% de acerto.
-            eval_success = command_success(ev, env.max_steps)
-            if eval_success >= 0.8 and speed >= state["v_max"]:
-                state["v_max"] = min(args.v_final, state["v_max"] + args.v_step)
-            metrics.update(eval_success=eval_success)
+            eval_success = command_success(ev, env.max_steps, args.yaw_tol if args.yaw_final > 0 else None)
+            if eval_success >= 0.8:  # primeiro a faixa de velocidade, depois a de giro
+                if state["v_max"] < args.v_final and speed >= state["v_max"]:
+                    state["v_max"] = min(args.v_final, state["v_max"] + args.v_step)
+                elif state["v_max"] >= args.v_final and args.yaw_final > 0:
+                    state["yaw_max"] = min(args.yaw_final, state["yaw_max"] + args.yaw_step)
+            metrics.update(eval_success=eval_success, eval_yaw_cmd=eval_yaw,
+                           eval_yaw_error=float(np.mean([e["yaw_error"] for e in ev])))
             metrics.update(eval_v_cmd=speed, eval_speed=float(np.mean([e["speed"] for e in ev])),
                            eval_glide=float(np.mean([e["glide_frac"] for e in ev])),
                            eval_fell=float(np.mean([e["fell"] for e in ev])))
-            score = metrics["eval_speed"] * (1 - metrics["eval_fell"]) * speed / max(speed, 1e-9)
+            score = level + eval_success  # o nível do currículo manda; no mesmo nível, o acerto
             best = score > state.get("best_score", -1.0)
             print(f"      avaliação da média a {speed:g} cm/s: vel {metrics['eval_speed']:.2f}, desliza "
                   f"{metrics['eval_glide']:.2f}, quedas {metrics['eval_fell']:.0%}, acerto {eval_success:.0%}"
+                  + (f", curvas ±{eval_yaw:g} rad/s, erro de giro {metrics['eval_yaw_error']:.2f}" if eval_yaw > 0 else "")
                   + (" (melhor até agora)" if best else ""),
                   flush=True)
             if best:
