@@ -143,3 +143,9 @@ cada etapa está no README.
   parado (0,07–0,09 cm/s, a 10 ms ou a 2 ms de controle). A caminhada do M4 não passa para o corpo de
   patins (botas no lugar de tarsos e garras, sem adesão), então soltar os patins aos poucos não parte de
   um andar.
+- Estratégias evolutivas (`m6_es.py`, OpenAI-ES sobre 14 mil parâmetros: fatores por tipo celular, tônus,
+  vieses do codificador e decodificador anatômico; ganhos por ligação fixos; cada ambiente do lote é uma
+  variação) tiram o conectoma do ponto fixo onde o PPO travou: com σ×2 (`--sigma-type 0.1 --sigma-tone 2
+  --sigma-enc 1 --sigma-dec-raw 0.2 --sigma-dec-bias 0.1`), a média da população anda 1,6 cm/s pedindo 2
+  já na geração 9 (evolui_a). Comece o currículo em `--v-start 2`: pedindo 0,3–1 cm/s, ficar parada paga
+  parte da recompensa de velocidade e as variações evoluem para ficar em pé melhor.
