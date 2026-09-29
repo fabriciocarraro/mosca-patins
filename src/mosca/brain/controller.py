@@ -209,7 +209,8 @@ class ConnectomePolicy(nn.Module):
         dos motores, vieses do codificador e dos halteres e o decodificador. Os ganhos por ligação ficam
         fixos (não cabem uma variação por coluna na multiplicação esparsa)."""
         out = {"log_a": self.net.log_a, "log_theta": self.net.log_theta, "log_tau": self.net.log_tau,
-               "motor_bias": self.motor_bias, "dec_raw": self.dec_raw, "dec_bias": self.dec_bias}
+               "motor_bias": self.motor_bias, "dec_raw": self.dec_raw, "dec_bias": self.dec_bias,
+               "log_walk_gain": self.log_walk_gain}
         for k in range(len(LEGS)):
             out[f"enc_b_{k}"] = self.enc_b[k]
         if self.cfg.haltere_input:
@@ -266,7 +267,9 @@ class ConnectomePolicy(nn.Module):
             g = obs[:, GYRO] / self.cfg.haltere_scale
             current = current.index_add(0, self.halt_neurons, self.halt_w @ g.T + self._col("halt_b", self.halt_b, batch))
         current = current.index_add(0, self.motors, self._col("motor_bias", self.motor_bias, batch))
-        drive = self.log_walk_gain.exp() * v_cmd
+        off = getattr(self, "population", None)
+        log_walk = self.log_walk_gain if off is None or "log_walk_gain" not in off else self.log_walk_gain + off["log_walk_gain"]
+        drive = log_walk.exp() * v_cmd
         current = current.index_add(0, self.dng100, drive[None, :].expand(len(self.dng100), -1))
         yaw = obs[:, 184]  # giro pedido (rad/s), na observação do ambiente
         turn = self.log_turn_gain.exp()

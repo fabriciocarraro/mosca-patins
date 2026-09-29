@@ -72,6 +72,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sigma-enc", type=float, default=0.5, help="σ dos vieses do codificador e dos halteres (corrente)")
     p.add_argument("--sigma-dec-raw", type=float, default=0.1, help="σ dos log-ganhos do decodificador")
     p.add_argument("--sigma-dec-bias", type=float, default=0.05, help="σ do viés do decodificador (ação)")
+    p.add_argument("--sigma-walk", type=float, default=0.2, help="σ do log-ganho do comando de velocidade (DNg100)")
     p.add_argument("--eval-every", type=int, default=10)
     p.add_argument("--eval-speed", type=float, default=4.0, help="teto da velocidade da avaliação (padrão: a do currículo)")
     p.add_argument("--p-stand", type=float, default=0.0,
@@ -157,14 +158,18 @@ def main() -> None:
         q.requires_grad_(True)
     sig = {"log_a": args.sigma_type, "log_theta": args.sigma_type, "log_tau": args.sigma_type,
            "motor_bias": args.sigma_tone, "dec_raw": args.sigma_dec_raw, "dec_bias": args.sigma_dec_bias,
-           "halt_b": args.sigma_enc, **{f"enc_b_{k}": args.sigma_enc for k in range(6)}}
+           "halt_b": args.sigma_enc, "log_walk_gain": args.sigma_walk,
+           **{f"enc_b_{k}": args.sigma_enc for k in range(6)}}
     es = PopulationES(params, {k: sig[k] for k in params}, args.lr, args.seed)
     state = {"gen": 0, "v_max": args.v_start, "yaw_max": args.yaw_start, "attempts": 0, "steps": 0}
     latest = run_dir / "latest.pt"
     if args.resume and latest.exists():
         ck = torch.load(latest, weights_only=False, map_location=device)
         pol.load_state_dict(ck["policy"])
-        es.opt.load_state_dict(ck["opt"])
+        try:
+            es.opt.load_state_dict(ck["opt"])
+        except ValueError:  # o conjunto de parâmetros variados mudou: o Adam recomeça
+            print("estado do otimizador incompatível com os parâmetros atuais: o Adam recomeça")
         for group, name in zip(es.opt.param_groups, es.params):  # a taxa da linha de comando vale na retomada
             group["lr"] = args.lr * es.sigma[name]
         state = ck["state"]
@@ -238,9 +243,15 @@ def main() -> None:
             speed = min(args.eval_speed, state["v_max"])
             eval_yaw = min(args.eval_yaw, state["yaw_max"])
             level = state["v_max"] + state["yaw_max"]  # nível do currículo nesta avaliação
-            yaw_tests = np.tile(np.array([0.0, eval_yaw, -eval_yaw])[np.arange(n) % 3], (env.max_steps, 1))
-            ev = run_episodes(env, pol, TEST_ATTEMPT_BASE + np.arange(n), np.full(n, speed),
+            # Com --p-stand, um quarto dos testes pede para ficar parada (conta no acerto do currículo).
+            stand = (np.arange(n) % 4 == 3) if args.p_stand > 0 else np.zeros(n, bool)
+            yaw_tests = np.tile(np.where(stand, 0.0, np.array([0.0, eval_yaw, -eval_yaw])[np.arange(n) % 3]),
+                                (env.max_steps, 1))
+            ev = run_episodes(env, pol, TEST_ATTEMPT_BASE + np.arange(n), np.where(stand, 0.0, speed),
                               yaw=yaw_tests if eval_yaw > 0 else None)
+            stand_ok = float(np.mean([not e["fell"] and abs(e["speed"]) < 0.5 for e, s in zip(ev, stand) if s])) \
+                if stand.any() else float("nan")
+            ev_move = [e for e, s in zip(ev, stand) if not s]
             # Currículo pela média (a mosca sem perturbação): a velocidade pedida sobe com 80% de acerto.
             eval_success = command_success(ev, env.max_steps, args.yaw_tol if args.yaw_final > 0 else None)
             if eval_success >= 0.8:  # primeiro a faixa de velocidade, depois a de giro
@@ -248,16 +259,17 @@ def main() -> None:
                     state["v_max"] = min(args.v_final, state["v_max"] + args.v_step)
                 elif state["v_max"] >= args.v_final and args.yaw_final > 0:
                     state["yaw_max"] = min(args.yaw_final, state["yaw_max"] + args.yaw_step)
-            metrics.update(eval_success=eval_success, eval_yaw_cmd=eval_yaw,
-                           eval_yaw_error=float(np.mean([e["yaw_error"] for e in ev])))
-            metrics.update(eval_v_cmd=speed, eval_speed=float(np.mean([e["speed"] for e in ev])),
-                           eval_glide=float(np.mean([e["glide_frac"] for e in ev])),
+            metrics.update(eval_success=eval_success, eval_yaw_cmd=eval_yaw, eval_stand_ok=stand_ok,
+                           eval_yaw_error=float(np.mean([e["yaw_error"] for e in ev_move])))
+            metrics.update(eval_v_cmd=speed, eval_speed=float(np.mean([e["speed"] for e in ev_move])),
+                           eval_glide=float(np.mean([e["glide_frac"] for e in ev_move])),
                            eval_fell=float(np.mean([e["fell"] for e in ev])))
             score = level + eval_success  # o nível do currículo manda; no mesmo nível, o acerto
             best = score > state.get("best_score", -1.0)
             print(f"      avaliação da média a {speed:g} cm/s: vel {metrics['eval_speed']:.2f}, desliza "
                   f"{metrics['eval_glide']:.2f}, quedas {metrics['eval_fell']:.0%}, acerto {eval_success:.0%}"
                   + (f", curvas ±{eval_yaw:g} rad/s, erro de giro {metrics['eval_yaw_error']:.2f}" if eval_yaw > 0 else "")
+                  + (f", fica parada quando pedido em {stand_ok:.0%}" if stand.any() else "")
                   + (" (melhor até agora)" if best else ""),
                   flush=True)
             if best:
