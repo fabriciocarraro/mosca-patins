@@ -70,6 +70,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--eval-every", type=int, default=10)
     p.add_argument("--eval-speed", type=float, default=3.0)
     p.add_argument("--save-every", type=int, default=25)
+    p.add_argument("--yaw-filtered", action="store_true",
+                   help="recompensa de giro pelo giro médio de 200 ms (o instantâneo é dominado pelo balanço)")
     p.add_argument("--probe", action="store_true", help="só o diagnóstico de sensibilidade")
     p.add_argument("--probe-scales", default="0.5,1,2,4")
     p.add_argument("--probe-speed", type=float, default=1.5)
@@ -113,7 +115,7 @@ def main() -> None:
         torch.cuda.set_per_process_memory_fraction(min(1.0, args.max_gpu_mem_gb * 2**30 / total), device)
     run_dir = RUNS / args.run
     (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
-    reward_cfg = RewardConfig(**{name: getattr(args, name) for name in REWARD_FLAGS})
+    reward_cfg = RewardConfig(**{name: getattr(args, name) for name in REWARD_FLAGS}, yaw_filtered=args.yaw_filtered)
     env_cfg = EnvConfig(n_envs=args.envs, n_threads=args.threads, episode_seconds=args.episode_seconds,
                         control_dt=args.control_dt, action_scale=args.action_scale, action_clip=args.action_clip,
                         seed=args.seed, reward=reward_cfg)
