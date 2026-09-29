@@ -138,6 +138,8 @@ def main() -> None:
         ck = torch.load(latest, weights_only=False, map_location=device)
         pol.load_state_dict(ck["policy"])
         es.opt.load_state_dict(ck["opt"])
+        for group, name in zip(es.opt.param_groups, es.params):  # a taxa da linha de comando vale na retomada
+            group["lr"] = args.lr * es.sigma[name]
         state = ck["state"]
         print(f"retomando da geração {state['gen']}")
     else:
