@@ -190,6 +190,9 @@ class PuglieseNet(nn.Module):
             _, groups = np.unique(np.asarray(cell_type, dtype=str), return_inverse=True)
         self.register_buffer("group", torch.as_tensor(groups, device=device, dtype=torch.long))
         k = int(groups.max()) + 1
+        # Deslocamentos por coluna do lote (estratégias evolutivas: cada ambiente roda uma variação):
+        # {"log_a"|"log_theta"|"log_tau": (tipos, lote)}; None = os mesmos parâmetros em todas as colunas.
+        self.type_offsets = None
         self.log_a = nn.Parameter(torch.zeros(k, device=device, dtype=dtype))
         self.log_theta = nn.Parameter(torch.zeros(k, device=device, dtype=dtype))
         self.log_tau = nn.Parameter(torch.zeros(k, device=device, dtype=dtype))
@@ -199,9 +202,18 @@ class PuglieseNet(nn.Module):
         return self.w.shape[0]
 
     def neuron_params(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """a, θ e τ de cada neurônio: (N, 1), ou (N, lote) com `type_offsets`."""
         g = self.group
-        return (self.a0 * self.log_a[g, None].exp(), self.theta0 * self.log_theta[g, None].exp(),
-                self.tau0 * self.log_tau[g, None].exp())
+        off = self.type_offsets or {}
+
+        def value(base, log, name):
+            x = log[g, None]
+            if name in off:
+                x = x + off[name][g].to(x.dtype)
+            return base * x.exp()
+
+        return (value(self.a0, self.log_a, "log_a"), value(self.theta0, self.log_theta, "log_theta"),
+                value(self.tau0, self.log_tau, "log_tau"))
 
     def exact_margin(self, r_bound: float = 1200.0) -> float:
         """No modo exato, quantas vezes o limite 2^23 é maior que a maior soma possível dos |produtos|

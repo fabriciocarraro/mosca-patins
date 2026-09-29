@@ -148,7 +148,7 @@ def main() -> None:
     def noise():
         return ColoredNoise(0, (n, env.act_dim), beta, device) if args.stochastic else None
 
-    print(f"checkpoint: iteração {state['it']}, {state['attempts']} tentativas de treino, v_max {state['v_max']:.1f} cm/s, "
+    print(f"checkpoint: iteração {state.get('it', state.get('gen'))}, {state['attempts']} tentativas de treino, v_max {state['v_max']:.1f} cm/s, "
           f"giro máximo {state.get('yaw_max', 0.0):.2f} rad/s; desvio do ruído {pol.log_std.exp().mean().item():.2f}")
     if args.stochastic:
         print("(com ruído de exploração: não vale para os critérios)")
@@ -203,7 +203,7 @@ def main() -> None:
 
         one_noise = ColoredNoise(0, (1, env.act_dim), beta, device) if args.stochastic else None
         run(env, pol, args.speed, yaw[:1], one_noise, on_step=grab, pilot=Pilot(course, 1) if course else None)
-        label = f"{Path(args.checkpoint).parent.name} it {state['it']}, {args.speed:g} cm/s" + (" (com ruído)" if args.stochastic else "")
+        label = f"{Path(args.checkpoint).parent.name} it {state.get('it', state.get('gen'))}, {args.speed:g} cm/s" + (" (com ruído)" if args.stochastic else "")
         if args.gif:
             Path(args.gif).parent.mkdir(parents=True, exist_ok=True)
             frames[0].save(args.gif, save_all=True, append_images=frames[1:], duration=40, loop=0)

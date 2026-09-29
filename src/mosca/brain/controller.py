@@ -202,6 +202,33 @@ class ConnectomePolicy(nn.Module):
         self.dec_bias = nn.Parameter(torch.zeros(self.n_out, device=device))
         self.log_std = nn.Parameter(torch.full((self.n_out,), float(np.log(cfg.init_std)), device=device))
 
+    # ------------------------------------------------------------ população (estratégias evolutivas)
+
+    def es_parameters(self) -> dict[str, torch.Tensor]:
+        """Os parâmetros que as estratégias evolutivas variam, por nome: fatores por tipo celular, tônus
+        dos motores, vieses do codificador e dos halteres e o decodificador. Os ganhos por ligação ficam
+        fixos (não cabem uma variação por coluna na multiplicação esparsa)."""
+        out = {"log_a": self.net.log_a, "log_theta": self.net.log_theta, "log_tau": self.net.log_tau,
+               "motor_bias": self.motor_bias, "dec_raw": self.dec_raw, "dec_bias": self.dec_bias}
+        for k in range(len(LEGS)):
+            out[f"enc_b_{k}"] = self.enc_b[k]
+        if self.cfg.haltere_input:
+            out["halt_b"] = self.halt_b
+        return out
+
+    def set_population(self, offsets: dict[str, torch.Tensor] | None) -> None:
+        """Deslocamentos (tamanho do parâmetro, lote) somados a cada coluna do lote, pelos nomes de
+        `es_parameters`; None volta a usar os mesmos parâmetros em todas as colunas."""
+        self.population = offsets
+        self.net.type_offsets = None if offsets is None else {k: v for k, v in offsets.items() if k.startswith("log_")}
+
+    def _col(self, name: str, value: torch.Tensor, batch: int) -> torch.Tensor:
+        """Parâmetro como coluna (tamanho, 1) ou, com população, (tamanho, lote)."""
+        off = getattr(self, "population", None)
+        if off is not None and name in off:
+            return value[:, None] + off[name].to(value.dtype)
+        return value[:, None].expand(-1, batch)
+
     def param_groups(self) -> dict[str, list[nn.Parameter]]:
         """Parâmetros por grupo, para taxas de aprendizado relativas (ver connectome_train.py)."""
         groups = {"rede": [self.net.log_a, self.net.log_theta, self.net.log_tau],
@@ -234,11 +261,11 @@ class ConnectomePolicy(nn.Module):
         for k in range(len(LEGS)):
             neurons, feats = getattr(self, f"enc_neurons_{k}"), getattr(self, f"enc_features_{k}")
             x = (obs[:, feats] - getattr(self, f"enc_center_{k}")) / getattr(self, f"enc_scale_{k}")
-            current = current.index_add(0, neurons, self.enc_w[k] @ x.T + self.enc_b[k][:, None])
+            current = current.index_add(0, neurons, self.enc_w[k] @ x.T + self._col(f"enc_b_{k}", self.enc_b[k], batch))
         if self.cfg.haltere_input:
             g = obs[:, GYRO] / self.cfg.haltere_scale
-            current = current.index_add(0, self.halt_neurons, self.halt_w @ g.T + self.halt_b[:, None])
-        current = current.index_add(0, self.motors, self.motor_bias[:, None].expand(-1, batch))
+            current = current.index_add(0, self.halt_neurons, self.halt_w @ g.T + self._col("halt_b", self.halt_b, batch))
+        current = current.index_add(0, self.motors, self._col("motor_bias", self.motor_bias, batch))
         drive = self.log_walk_gain.exp() * v_cmd
         current = current.index_add(0, self.dng100, drive[None, :].expand(len(self.dng100), -1))
         yaw = obs[:, 184]  # giro pedido (rad/s), na observação do ambiente
@@ -248,13 +275,14 @@ class ConnectomePolicy(nn.Module):
 
     def decode(self, r: torch.Tensor) -> torch.Tensor:
         """Ação média (lote, n_out) a partir das taxas (N, lote)."""
-        weight = torch.where(self.dec_free, self.cfg.dec_gain * self.dec_raw, self.dec_sign * self.dec_raw.exp())
-        contrib = weight[:, None] * r[self.dec_motor].float()
+        raw = self._col("dec_raw", self.dec_raw, r.shape[1])
+        weight = torch.where(self.dec_free[:, None], self.cfg.dec_gain * raw, self.dec_sign[:, None] * raw.exp())
+        contrib = weight * r[self.dec_motor].float()
         if self.cfg.deterministic:
             out = self.dec_scatter @ contrib
         else:
             out = torch.zeros(self.n_out, r.shape[1], device=self.device).index_add(0, self.dec_out, contrib)
-        return out.T + self.dec_bias
+        return (out + self._col("dec_bias", self.dec_bias, r.shape[1])).T
 
     @torch.no_grad()
     def calibrate_rest(self, obs_rest: torch.Tensor, v_cmd: float, seconds: float = 1.0) -> None:
