@@ -135,6 +135,7 @@ cada etapa está no README.
   patas (0,005). Lendo os motores: todos, livre, 0,25; só os da própria pata 0,74; pelo decodificador
   anatômico (músculo → junta, sinal fixo) 0,88 (com qualquer sinal, 0,84). A informação está nos motores
   das outras patas: o treino teria de reorganizar quais motores disparam em cada pata, e por isso o PPO
-  não tira a política média do ponto fixo. A imitação offline ponta a ponta caiu só de 31 para 14 em 8
-  épocas. De patins, o conectoma que anda fica parado num ponto fixo (rede ativa, ~22 Hz nos motores),
+  não tira a política média do ponto fixo. A imitação offline ponta a ponta (taxa 3e-3) cai de 31 e para
+  em ~2 depois de 17 épocas (melhor 1,96): nem treinado ele imita a MLP melhor que a média das ações (no
+  M4, 0,27). De patins, o conectoma que anda fica parado num ponto fixo (rede ativa, ~22 Hz nos motores),
   também com controle a 2 ms; o ruído de 1,0 derruba ~20% das tentativas (0,6: 2–3%).
