@@ -39,3 +39,13 @@ M6: critério do M2 (≥80% de 20 testes com média ≥3 cm/s em 5 s pedindo 3,5
 quedas), slalom completo e provas causais (DNg100 calado para a mosca; DNa02 de um lado a vira para esse lado),
 medidos com `m6_eval.py`. O critério "em até 3× os passos do M2" não vale para este método: as estratégias
 evolutivas usaram ~6,6× nos exploratórios (desvio a registrar no README).
+
+## Escolha na geração 50 (01/10/2026)
+
+Avaliações da média nas gerações 45 e 50 (velocidade pedida 2 cm/s):
+
+| Semente | Velocidade | Deslizando (média) | Resultado |
+|---|---|---|---|
+| 0 | 1,34 / 1,20 cm/s | 17,5% | segue (anda ≥1 cm/s e é a que mais desliza, ≥15%) |
+| 1 | 1,57 / 1,75 cm/s | 7% | parada na geração 52, captura guardada |
+| 2 | 0,07 / 0,05 cm/s | — | parada na geração 52 (não saiu do lugar), captura guardada |
