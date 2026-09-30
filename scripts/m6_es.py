@@ -84,6 +84,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sigma-neuron", type=float, default=0.05, help="σ do log-fator de limiar por neurônio")
     p.add_argument("--eval-every", type=int, default=10)
     p.add_argument("--eval-speed", type=float, default=4.0, help="teto da velocidade da avaliação (padrão: a do currículo)")
+    p.add_argument("--phase2-gen", type=int, default=0,
+                   help="geração em que entram os pedidos de parada e as curvas (antes, só retas: o deslize aparece "
+                        "primeiro; depois, cedo o bastante para não perder a via direita do DNa02)")
     p.add_argument("--p-stand", type=float, default=0.0,
                    help="fração dos pares que pede velocidade 0 (DNg100 sem corrente): calar o DNg100 passa a parar a mosca")
     p.add_argument("--yaw-final", type=float, default=0.0,
@@ -235,11 +238,13 @@ def main() -> None:
         attempts = np.arange(gen * n, (gen + 1) * n)
         rng = np.random.default_rng(attempt_seed(args.seed, -1 - gen))
         v_max = state["v_max"]
+        phase2 = gen >= args.phase2_gen
+        p_stand = args.p_stand if phase2 else 0.0
         v_pair = rng.uniform(0.3 * v_max, v_max, n // 2)
-        if args.p_stand > 0:  # pares mandados ficar parados
-            v_pair[rng.random(n // 2) < args.p_stand] = 0.0
+        if p_stand > 0:  # pares mandados ficar parados
+            v_pair[rng.random(n // 2) < p_stand] = 0.0
         v_cmd = np.concatenate([v_pair, v_pair])  # os dois membros de cada par antitético com o mesmo pedido
-        yaw_max = state["yaw_max"]
+        yaw_max = state["yaw_max"] if phase2 else 0.0
         yaw_pair = yaw_schedule(rng, n // 2, env.max_steps, yaw_max, args.yaw_switch / env_cfg.control_dt)
         yaw = np.concatenate([yaw_pair, yaw_pair], axis=1) if yaw_max > 0 else None
         eps = es.sample(gen, n)
@@ -264,10 +269,10 @@ def main() -> None:
                    "time": time.perf_counter() - t0}
         if args.eval_every and (gen + 1) % args.eval_every == 0:
             speed = min(args.eval_speed, state["v_max"])
-            eval_yaw = min(args.eval_yaw, state["yaw_max"])
-            level = state["v_max"] + state["yaw_max"]  # nível do currículo nesta avaliação
+            eval_yaw = min(args.eval_yaw, yaw_max)
+            level = state["v_max"] + yaw_max  # nível do currículo nesta avaliação
             # Com --p-stand, um quarto dos testes pede para ficar parada (conta no acerto do currículo).
-            stand = (np.arange(n) % 4 == 3) if args.p_stand > 0 else np.zeros(n, bool)
+            stand = (np.arange(n) % 4 == 3) if p_stand > 0 else np.zeros(n, bool)
             yaw_tests = np.tile(np.where(stand, 0.0, np.array([0.0, eval_yaw, -eval_yaw])[np.arange(n) % 3]),
                                 (env.max_steps, 1))
             ev = run_episodes(env, pol, TEST_ATTEMPT_BASE + np.arange(n), np.where(stand, 0.0, speed),
@@ -276,11 +281,11 @@ def main() -> None:
                 if stand.any() else float("nan")
             ev_move = [e for e, s in zip(ev, stand) if not s]
             # Currículo pela média (a mosca sem perturbação): a velocidade pedida sobe com 80% de acerto.
-            eval_success = command_success(ev, env.max_steps, args.yaw_tol if args.yaw_final > 0 else None)
+            eval_success = command_success(ev, env.max_steps, args.yaw_tol if args.yaw_final > 0 and phase2 else None)
             if eval_success >= 0.8:  # primeiro a faixa de velocidade, depois a de giro
                 if state["v_max"] < args.v_final and speed >= state["v_max"]:
                     state["v_max"] = min(args.v_final, state["v_max"] + args.v_step)
-                elif state["v_max"] >= args.v_final and args.yaw_final > 0:
+                elif state["v_max"] >= args.v_final and args.yaw_final > 0 and phase2:
                     state["yaw_max"] = min(args.yaw_final, state["yaw_max"] + args.yaw_step)
             metrics.update(eval_success=eval_success, eval_yaw_cmd=eval_yaw, eval_stand_ok=stand_ok,
                            eval_yaw_error=float(np.mean([e["yaw_error"] for e in ev_move])))
