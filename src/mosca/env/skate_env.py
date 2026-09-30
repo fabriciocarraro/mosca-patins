@@ -59,6 +59,10 @@ class RewardConfig:
     # Giro da recompensa pela média móvel de ema_tau, como a velocidade. O instantâneo é dominado pelo
     # balanço do corpo: com o ruído de exploração, ~3,8 rad/s em média com giro médio de ~0,2 rad/s.
     yaw_filtered: bool = False
+    # A recompensa de giro só paga na proporção em que a mosca anda na velocidade pedida (como o rolamento).
+    # Sem isso, com w_yaw alto, ficar parada (giro zero) rende a recompensa de giro inteira e a mosca não sai
+    # do lugar. Com pedido de ficar parada (v < 0,5 cm/s), vale inteira.
+    yaw_gated: bool = False
 
 
 @dataclass(frozen=True)
@@ -321,6 +325,8 @@ class SkateVecEnv:
             r_vel = np.exp(-(((self.ema_v[i] - self.v_cmd[i]) / sigma_vel) ** 2))
         yaw_used = self.ema_yaw[i] if rw.yaw_filtered else yaw_rate
         r_yaw = np.exp(-(((yaw_used - self.yaw_cmd[i]) / rw.sigma_yaw) ** 2))
+        if rw.yaw_gated and self.v_cmd[i] >= 0.5:
+            r_yaw *= min(max(self.ema_v[i], 0.0) / self.v_cmd[i], 1.0)
         r_up = max(up_z, 0.0)
         if grounded.any() and self.v_cmd[i] >= 0.5:
             r_roll = float(np.mean(np.exp(-(((along[grounded] - v_fwd) / rw.sigma_roll) ** 2))))
