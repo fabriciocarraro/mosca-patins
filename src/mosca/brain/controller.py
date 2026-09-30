@@ -72,6 +72,9 @@ class ControllerConfig:
     haltere_scale: float = 2.0  # rad/s por unidade na entrada dos halteres
     haltere_offset: float | None = None  # viés inicial dos halteres em relação ao limiar (padrão: prop_offset)
     turn_cells: tuple[str, ...] = ("DNa01", "DNa02")  # descendentes que recebem o comando de giro
+    # Ganho de giro separado para o lado direito (log_turn_gain_r): a via do DNa02 direito é mais fraca na
+    # mosca patinadora evoluída, e um ganho só não compensa os dois lados.
+    turn_side_gains: bool = False
     # "float64": estado e parâmetros da rede em precisão dupla. Na GPU, a multiplicação esparsa soma em
     # ordem variável; em float32 a diferença entre duas execuções (1e-3 numa escala de 3 mil) é amplificada
     # pela rede com neurônios de 5 ms até 0,07 na ação em 16 passos, e o PPO (que re-executa a política na
@@ -162,6 +165,8 @@ class ConnectomePolicy(nn.Module):
         self.register_buffer("turn_l", torch.as_tensor(turn_l, dtype=torch.long, device=device))
         self.register_buffer("turn_r", torch.as_tensor(turn_r, dtype=torch.long, device=device))
         self.log_turn_gain = nn.Parameter(torch.tensor(float(np.log(cfg.turn_gain)), device=device))
+        if cfg.turn_side_gains:
+            self.log_turn_gain_r = nn.Parameter(torch.tensor(float(np.log(cfg.turn_gain)), device=device))
 
         # Decodificador: ligações neurônio motor → saída (servos: pata × 7 + junta; adesão: 42 + pata).
         self.n_out = 6 * N_JOINTS + (6 if cfg.body == "walk" else 0)
@@ -211,6 +216,8 @@ class ConnectomePolicy(nn.Module):
         out = {"log_a": self.net.log_a, "log_theta": self.net.log_theta, "log_tau": self.net.log_tau,
                "motor_bias": self.motor_bias, "dec_raw": self.dec_raw, "dec_bias": self.dec_bias,
                "log_walk_gain": self.log_walk_gain, "log_turn_gain": self.log_turn_gain}
+        if self.cfg.turn_side_gains:
+            out["log_turn_gain_r"] = self.log_turn_gain_r
         for k in range(len(LEGS)):
             out[f"enc_b_{k}"] = self.enc_b[k]
         if self.cfg.haltere_input:
@@ -236,7 +243,7 @@ class ConnectomePolicy(nn.Module):
                 "codificador": list(self.enc_w) + list(self.enc_b) + ([self.halt_w, self.halt_b] if self.cfg.haltere_input else []),
                 "tonus": [self.motor_bias],
                 "decodificador": [self.dec_raw, self.dec_bias],
-                "comando": [self.log_walk_gain, self.log_turn_gain],
+                "comando": [self.log_walk_gain, self.log_turn_gain] + ([self.log_turn_gain_r] if self.cfg.turn_side_gains else []),
                 "exploracao": [self.log_std]}
         if self.net.has_gains:
             groups["sinapses"] = [self.net.log_gain]
@@ -274,8 +281,12 @@ class ConnectomePolicy(nn.Module):
         yaw = obs[:, 184]  # giro pedido (rad/s), na observação do ambiente
         log_turn = self.log_turn_gain if off is None or "log_turn_gain" not in off else self.log_turn_gain + off["log_turn_gain"]
         turn = log_turn.exp()
+        turn_r = turn
+        if self.cfg.turn_side_gains:
+            log_r = self.log_turn_gain_r if off is None or "log_turn_gain_r" not in off else self.log_turn_gain_r + off["log_turn_gain_r"]
+            turn_r = log_r.exp()
         current = current.index_add(0, self.turn_l, (turn * torch.relu(yaw))[None, :].expand(len(self.turn_l), -1))
-        return current.index_add(0, self.turn_r, (turn * torch.relu(-yaw))[None, :].expand(len(self.turn_r), -1))
+        return current.index_add(0, self.turn_r, (turn_r * torch.relu(-yaw))[None, :].expand(len(self.turn_r), -1))
 
     def decode(self, r: torch.Tensor) -> torch.Tensor:
         """Ação média (lote, n_out) a partir das taxas (N, lote)."""

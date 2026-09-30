@@ -60,8 +60,10 @@ def side_current(pol, groups: dict, cell: str, sides: np.ndarray, device) -> tor
     """Corrente (N, lote) nos neurônios `cell` do lado de cada tentativa (+1 esquerdo, −1 direito, 0 nenhum),
     igual à que o comando de giro de 1 rad/s injeta."""
     extra = torch.zeros(pol.n, len(sides), device=device)
-    turn = pol.log_turn_gain.exp().item()
+    turn_l = pol.log_turn_gain.exp().item()
+    turn_r = pol.log_turn_gain_r.exp().item() if getattr(pol.cfg, "turn_side_gains", False) else turn_l
     for side, code in ((1, "L"), (-1, "R")):
+        turn = turn_l if side > 0 else turn_r
         cols = np.flatnonzero(sides == side)
         if len(cols):
             rows = torch.as_tensor(groups[f"{cell}_{code}"], device=device)
