@@ -67,6 +67,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--v-final", type=float, default=4.0)
     p.add_argument("--v-step", type=float, default=0.5)
     p.add_argument("--lr", type=float, default=0.3, help="passo relativo: a média anda ~lr·σ por geração")
+    p.add_argument("--lr-warm", type=float, default=0.0,
+                   help="passo relativo nas primeiras --lr-warm-gens gerações (sair do ponto fixo depressa)")
+    p.add_argument("--lr-warm-gens", type=int, default=0)
     p.add_argument("--sigma-type", type=float, default=0.05, help="σ dos log-fatores por tipo celular (a, θ, τ)")
     p.add_argument("--sigma-tone", type=float, default=1.0, help="σ do tônus dos motores (corrente)")
     p.add_argument("--sigma-enc", type=float, default=0.5, help="σ dos vieses do codificador e dos halteres (corrente)")
@@ -221,6 +224,9 @@ def main() -> None:
 
     print(" ger  tentativas  ret_méd  ret_máx  vel_méd  vel_máx queda% v_max sucesso  |grad|  tempo")
     for gen in range(state["gen"], args.generations):
+        lr_now = args.lr_warm if gen < args.lr_warm_gens and args.lr_warm > 0 else args.lr
+        for group, name in zip(es.opt.param_groups, es.params):
+            group["lr"] = lr_now * es.sigma[name]
         t0 = time.perf_counter()
         attempts = np.arange(gen * n, (gen + 1) * n)
         rng = np.random.default_rng(attempt_seed(args.seed, -1 - gen))
