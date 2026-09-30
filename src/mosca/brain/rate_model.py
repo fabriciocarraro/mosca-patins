@@ -125,7 +125,8 @@ class _GainedSpMM(torch.autograd.Function):
 class PuglieseNet(nn.Module):
     def __init__(self, w: sp.csr_matrix, params: NeuronParams, cell_type: np.ndarray | None = None, b: float = B,
                  device: str | torch.device = "cpu", dtype=torch.float32, surrogate: bool = False,
-                 gain_rows: np.ndarray | None = None, edge_gains: bool = False, exact: bool = False):
+                 gain_rows: np.ndarray | None = None, edge_gains: bool = False, exact: bool = False,
+                 neuron_theta: bool = False):
         """`w`: pós × pré com sinal × nº de sinapses (sem o b); `cell_type`: rótulo de cada neurônio
         para compartilhar os fatores treináveis (None = um fator por neurônio); `gain_rows`:
         neurônios cujas ligações de entrada ganham um fator treinável por ligação; `exact`: somas
@@ -196,6 +197,11 @@ class PuglieseNet(nn.Module):
         self.log_a = nn.Parameter(torch.zeros(k, device=device, dtype=dtype))
         self.log_theta = nn.Parameter(torch.zeros(k, device=device, dtype=dtype))
         self.log_tau = nn.Parameter(torch.zeros(k, device=device, dtype=dtype))
+        # Fator de limiar por neurônio (opcional), somado ao do tipo: permite excitabilidades diferentes nos dois
+        # lados (os fatores por tipo são compartilhados entre esquerda e direita).
+        self.neuron_theta = neuron_theta
+        if neuron_theta:
+            self.log_theta_neuron = nn.Parameter(torch.zeros(len(params.tau), device=device, dtype=dtype))
 
     @property
     def n(self) -> int:
@@ -210,6 +216,10 @@ class PuglieseNet(nn.Module):
             x = log[g, None]
             if name in off:
                 x = x + off[name][g].to(x.dtype)
+            if name == "log_theta" and self.neuron_theta:
+                x = x + self.log_theta_neuron[:, None]
+                if "log_theta_neuron" in off:
+                    x = x + off["log_theta_neuron"].to(x.dtype)
             return base * x.exp()
 
         return (value(self.a0, self.log_a, "log_a"), value(self.theta0, self.log_theta, "log_theta"),

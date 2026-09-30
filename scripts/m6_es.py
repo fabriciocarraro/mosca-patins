@@ -75,6 +75,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sigma-walk", type=float, default=0.2, help="σ do log-ganho do comando de velocidade (DNg100)")
     p.add_argument("--sigma-turn", type=float, default=0.2, help="σ do log-ganho do comando de giro (DNa02)")
     p.add_argument("--turn-side-gains", action="store_true", help="ganho de giro separado para o lado direito")
+    p.add_argument("--neuron-theta", action="store_true",
+                   help="fator de limiar por neurônio também evoluído (ajustes diferentes em cada lado)")
+    p.add_argument("--sigma-neuron", type=float, default=0.05, help="σ do log-fator de limiar por neurônio")
     p.add_argument("--eval-every", type=int, default=10)
     p.add_argument("--eval-speed", type=float, default=4.0, help="teto da velocidade da avaliação (padrão: a do currículo)")
     p.add_argument("--p-stand", type=float, default=0.0,
@@ -151,7 +154,7 @@ def main() -> None:
                                 haltere_offset=args.haltere_offset, turn_cells=tuple(args.turn_cells.split(",")),
                                 turn_gain=args.turn_gain, enc_std=args.enc_std, dec_gain=args.dec_gain,
                                 seed=args.seed, net_dtype=args.net_dtype, deterministic=args.deterministic,
-                                turn_side_gains=args.turn_side_gains)
+                                turn_side_gains=args.turn_side_gains, neuron_theta=args.neuron_theta)
     env = SkateVecEnv(env_cfg)
     pol = ConnectomePolicy(Connectome.load(Path(args.graph)), ctrl_cfg, device=device)
     for q in pol.parameters():
@@ -162,7 +165,7 @@ def main() -> None:
     sig = {"log_a": args.sigma_type, "log_theta": args.sigma_type, "log_tau": args.sigma_type,
            "motor_bias": args.sigma_tone, "dec_raw": args.sigma_dec_raw, "dec_bias": args.sigma_dec_bias,
            "halt_b": args.sigma_enc, "log_walk_gain": args.sigma_walk, "log_turn_gain": args.sigma_turn,
-           "log_turn_gain_r": args.sigma_turn,
+           "log_turn_gain_r": args.sigma_turn, "log_theta_neuron": args.sigma_neuron,
            **{f"enc_b_{k}": args.sigma_enc for k in range(6)}}
     es = PopulationES(params, {k: sig[k] for k in params}, args.lr, args.seed)
     state = {"gen": 0, "v_max": args.v_start, "yaw_max": args.yaw_start, "attempts": 0, "steps": 0}
@@ -170,11 +173,12 @@ def main() -> None:
     if args.resume and latest.exists():
         ck = torch.load(latest, weights_only=False, map_location=device)
         missing, _ = pol.load_state_dict(ck["policy"], strict=False)
-        if missing == ["log_turn_gain_r"]:  # checkpoint de antes do ganho por lado: começa igual ao da esquerda
+        if "log_turn_gain_r" in missing:  # checkpoint de antes do ganho por lado: começa igual ao da esquerda
             with torch.no_grad():
                 pol.log_turn_gain_r.copy_(pol.log_turn_gain)
-        elif missing:
-            raise RuntimeError(f"parâmetros faltando no checkpoint: {missing}")
+        unknown = set(missing) - {"log_turn_gain_r", "net.log_theta_neuron"}  # o fator por neurônio começa em 0
+        if unknown:
+            raise RuntimeError(f"parâmetros faltando no checkpoint: {sorted(unknown)}")
         try:
             es.opt.load_state_dict(ck["opt"])
         except ValueError:  # o conjunto de parâmetros variados mudou: o Adam recomeça

@@ -75,6 +75,8 @@ class ControllerConfig:
     # Ganho de giro separado para o lado direito (log_turn_gain_r): a via do DNa02 direito é mais fraca na
     # mosca patinadora evoluída, e um ganho só não compensa os dois lados.
     turn_side_gains: bool = False
+    # Fator de limiar por neurônio além do por tipo (mosca.brain.rate_model, `neuron_theta`).
+    neuron_theta: bool = False
     # "float64": estado e parâmetros da rede em precisão dupla. Na GPU, a multiplicação esparsa soma em
     # ordem variável; em float32 a diferença entre duas execuções (1e-3 numa escala de 3 mil) é amplificada
     # pela rede com neurônios de 5 ms até 0,07 na ação em 16 passos, e o PPO (que re-executa a política na
@@ -119,7 +121,8 @@ class ConnectomePolicy(nn.Module):
             raise ValueError("deterministic=True precisa de net_dtype='float64'")
         self.net = PuglieseNet(signed_matrix(c), params, cell_type=c.cell_type, device=device, surrogate=True,
                                gain_rows=leg_motors if cfg.motor_synapse_gains else None,
-                               edge_gains=cfg.all_synapse_gains, dtype=self.net_dtype, exact=cfg.deterministic)
+                               edge_gains=cfg.all_synapse_gains, dtype=self.net_dtype, exact=cfg.deterministic,
+                               neuron_theta=cfg.neuron_theta)
         self.n = c.n
         gen = torch.Generator().manual_seed(cfg.seed)
 
@@ -218,6 +221,8 @@ class ConnectomePolicy(nn.Module):
                "log_walk_gain": self.log_walk_gain, "log_turn_gain": self.log_turn_gain}
         if self.cfg.turn_side_gains:
             out["log_turn_gain_r"] = self.log_turn_gain_r
+        if self.cfg.neuron_theta:
+            out["log_theta_neuron"] = self.net.log_theta_neuron
         for k in range(len(LEGS)):
             out[f"enc_b_{k}"] = self.enc_b[k]
         if self.cfg.haltere_input:
@@ -228,7 +233,8 @@ class ConnectomePolicy(nn.Module):
         """Deslocamentos (tamanho do parâmetro, lote) somados a cada coluna do lote, pelos nomes de
         `es_parameters`; None volta a usar os mesmos parâmetros em todas as colunas."""
         self.population = offsets
-        self.net.type_offsets = None if offsets is None else {k: v for k, v in offsets.items() if k.startswith("log_")}
+        self.net.type_offsets = None if offsets is None else {
+            k: v for k, v in offsets.items() if k in ("log_a", "log_theta", "log_tau", "log_theta_neuron")}
 
     def _col(self, name: str, value: torch.Tensor, batch: int) -> torch.Tensor:
         """Parâmetro como coluna (tamanho, 1) ou, com população, (tamanho, lote)."""
