@@ -161,3 +161,17 @@ cada etapa está no README.
 - Para calar um neurônio com controle a 10 ms, inibir com corrente muito negativa (`m6_eval.py --probes`):
   zerar a taxa só no fim de cada passo deixa o neurônio disparar nos 5 subpassos de RK4 seguintes (com isso,
   o DNg100 "calado" ainda dava 2,4–2,6 cm/s; inibido, 0,29 cm/s contra 3,52, na geração 448 do evolui_b).
+- Curvas nos patins (evolui_b/c/d): com as curvas entrando no currículo só depois da velocidade, a mosca
+  evoluída vira à esquerda (+0,3 a +0,6 rad/s pedindo +0,75) e nada à direita, e o currículo não passa de
+  ±0,75 rad/s. O DNa01 e o DNa02 direitos não viram a mosca para a direita nem com 10× a corrente (o DNa01
+  esquerdo, com corrente 4000, vira para a direita); inibir os DNa não muda nada (não têm atividade de
+  repouso). Ganho de giro por lado (`--turn-side-gains`) e limiar por neurônio (`--neuron-theta`) não
+  destravaram em ~150 gerações. A via do DNa02 direito existia no começo da patinação evoluída (−0,26 rad/s
+  na geração 337 do evolui_b; −1,03 com corrente 4000 na geração 35 do evolui_e) e se perde enquanto o treino
+  só pede retas: ponha curvas pequenas desde a geração 0 (`--yaw-start 0.3`).
+- evolui_e (receita completa da geração 0, população 128, 37 mil parâmetros, peso de giro 0,3): a média caiu
+  num ótimo local, círculos apertados à direita (−1,4 a −2,1 rad/s) dando passos (deslize 3–5%), com o retorno
+  da população subindo. A recompensa de giro com peso 0,3 não segura quem ganha velocidade girando: use
+  `--w-yaw 1.0`. A média pode piorar enquanto a população melhora (a evolução otimiza o retorno esperado sob
+  perturbação): avalie sempre a média.
+
