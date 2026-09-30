@@ -55,6 +55,10 @@ class RewardConfig:
     w_rate: float = 0.01  # mudança brusca de ação
     w_leg_floor: float = 0.1  # por segmento de pata encostado no chão
     w_contact: float = 0.0  # fração dos 6 patins apoiados (desestimula levantar os patins para dar passos)
+    # Bônus de deslize (alavanca prevista no plano): paga no passo em que a mosca anda (> 0,5 cm/s, com pedido
+    # de movimento) e todos os patins apoiados rolam ao longo do próprio eixo a ≥70% da velocidade do corpo
+    # (o mesmo critério da estatística "desliza").
+    w_glide: float = 0.0
     ema_tau: float = 0.2  # s, média móvel da velocidade usada na recompensa
     # Giro da recompensa pela média móvel de ema_tau, como a velocidade. O instantâneo é dominado pelo
     # balanço do corpo: com o ruído de exploração, ~3,8 rad/s em média com giro médio de ~0,2 rad/s.
@@ -339,8 +343,11 @@ class SkateVecEnv:
         cot = power / (self.weight * max(abs(v_fwd), 0.5))
         rate = float(np.mean((action - self.prev_action[i]) ** 2))
         contact = float(grounded.mean())
+        gliding = float(grounded.any() and self.v_cmd[i] >= 0.5 and abs(v_fwd) > 0.5
+                        and bool((np.abs(along[grounded]) > 0.7 * abs(v_fwd)).all()))
         reward = (rw.w_vel * r_vel + rw.w_yaw * r_yaw + rw.w_up * r_up + rw.w_roll * r_roll + rw.w_contact * contact
-                  - rw.w_slip * slip - rw.w_cot * cot - rw.w_rate * rate - rw.w_leg_floor * leg_floor)
+                  + rw.w_glide * gliding - rw.w_slip * slip - rw.w_cot * cot - rw.w_rate * rate
+                  - rw.w_leg_floor * leg_floor)
 
         # Estatísticas da tentativa
         if update:
