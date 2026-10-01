@@ -59,3 +59,11 @@ a para (0,02 cm/s); o DNa02 direito a vira para a direita, o esquerdo quase não
 continua), a recompensa passa a premiar mais o deslize: `--w-roll 1.5 --w-glide 0.5` (antes 0,5 e 0). Toda
 retomada fica registrada em `runs/final_s0/resumes.jsonl`. O vídeo diz que a regra mudou nessa tentativa.
 Se o deslize não subir em ~150 gerações, a decisão volta ao usuário.
+
+## Resultado do desvio (geração 686, 01/10/2026)
+
+O deslize subiu de 3% (geração 536) para 41% em ~150 gerações. Na geração 686, os 20 testes fixos pedindo
+3,5 cm/s dão média de 3,76 cm/s, 100% acima de 3 cm/s, 42% do tempo deslizando e nenhuma queda: **critério do M2
+cumprido no treino gravado**. Calar o DNg100 para a mosca (3,76 → 0,01 cm/s). Ainda falta o rumo: a 3 cm/s ela
+gira à direita (−0,6 a −0,85 rad/s) e ignora o giro pedido de ±0,5 rad/s, e estimular o DNa02 de qualquer lado
+a vira para a esquerda (+0,6 e +1,2 rad/s com corrente 4000). O treino segue com o currículo de curvas.
