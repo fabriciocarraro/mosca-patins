@@ -49,3 +49,13 @@ Avaliações da média nas gerações 45 e 50 (velocidade pedida 2 cm/s):
 | 0 | 1,34 / 1,20 cm/s | 17,5% | segue (anda ≥1 cm/s e é a que mais desliza, ≥15%) |
 | 1 | 1,57 / 1,75 cm/s | 7% | parada na geração 52, captura guardada |
 | 2 | 0,07 / 0,05 cm/s | — | parada na geração 52 (não saiu do lugar), captura guardada |
+
+## Desvio da receita na geração 536 (01/10/2026, decidido pelo usuário)
+
+Até a geração ~424, a semente 0 aprendeu a andar de patins dando passos, sem deslizar: pedindo 3,5 cm/s,
+média de 2,98 cm/s, 1% do tempo deslizando, nenhuma queda, rumo reto (erro de giro 0,33 rad/s); calar o DNg100
+a para (0,02 cm/s); o DNa02 direito a vira para a direita, o esquerdo quase não. O deslize, de 17% na geração
+50, tinha sumido em ~200 gerações. A partir da geração 536 (o mesmo treino gravado, a numeração das tentativas
+continua), a recompensa passa a premiar mais o deslize: `--w-roll 1.5 --w-glide 0.5` (antes 0,5 e 0). Toda
+retomada fica registrada em `runs/final_s0/resumes.jsonl`. O vídeo diz que a regra mudou nessa tentativa.
+Se o deslize não subir em ~150 gerações, a decisão volta ao usuário.
