@@ -198,6 +198,9 @@ def main() -> None:
         state = ck["state"]
         state.setdefault("yaw_max", 0.0)
         print(f"retomando da geração {state['gen']}")
+        # Toda retomada fica registrada com os argumentos (mudanças de receita no meio de um treino gravado).
+        with open(run_dir / "resumes.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps({"gen": state["gen"], "args": vars(args)}) + "\n")
     else:
         if args.init_from:
             print(f"partindo de {args.init_from}: {load_walking(pol, args.init_from, device)} tensores/ganhos copiados")
