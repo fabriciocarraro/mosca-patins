@@ -67,3 +67,12 @@ O deslize subiu de 3% (geração 536) para 41% em ~150 gerações. Na geração 
 cumprido no treino gravado**. Calar o DNg100 para a mosca (3,76 → 0,01 cm/s). Ainda falta o rumo: a 3 cm/s ela
 gira à direita (−0,6 a −0,85 rad/s) e ignora o giro pedido de ±0,5 rad/s, e estimular o DNa02 de qualquer lado
 a vira para a esquerda (+0,6 e +1,2 rad/s com corrente 4000). O treino segue com o currículo de curvas.
+
+## Segundo desvio na geração 824 (01/10/2026, decidido pelo usuário)
+
+Depois do primeiro desvio, a mosca desliza 58–66% do tempo e para quando pedido, mas ignora o comando de giro:
+na geração ~800, a 3 cm/s, gira à esquerda (+0,63 rad/s) pedindo ±0,5 rad/s, e o DNa02 ficou invertido (o
+esquerdo vira para a direita, −0,39 rad/s com corrente 4000; o direito, para a esquerda, +0,34). A partir da
+geração 824, a recompensa de giro pesa 1,0 (antes 0,3), condicionada à velocidade (`--w-yaw 1.0 --yaw-gated`,
+para não premiar ficar parada); rolamento 1,5 e deslize 0,5 continuam. Se o deslize cair ou as curvas não
+saírem em ~150 gerações, a decisão volta ao usuário.
