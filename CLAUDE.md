@@ -24,6 +24,10 @@ cada etapa está no README.
 - Física: `scripts/bench_physics.py`, `scripts/m1_skate_physics.py`, `scripts/m1_gait_search.py`
 - Treino M2 (no Spark, com `nice`): `scripts/m2_train.py --run NOME`; avaliação: `scripts/m2_eval.py`
 - Cérebro M3: `scripts/m3_vnc_weights.py` e `scripts/m3_build_graph.py` (Spark), `scripts/m3_rhythm_full.py`
+- Patinação do conectoma (M6): `scripts/m6_es.py`; avaliação `scripts/m6_eval.py`; controles (M7): `scripts/m7_eval.py`
+  (registro em `docs/m7_controles.md`; no Spark, a fila `runs/m7p_queue.sh` lança os braços com vigia)
+- Vídeo (M8): `scripts/m8_trace.py` no Spark (re-simula e guarda posturas e atividade), `scripts/m8_render.py` no
+  notebook (o Spark não renderiza: sem EGL nem ffmpeg); posições dos neurônios em `scripts/m8_neuron_positions.py`
 
 ## Regras do projeto
 
@@ -100,6 +104,11 @@ cada etapa está no README.
   checkpoint parado, e `--resume` retoma. No Spark, `runs/supervise.sh EXECUÇÃO SCRIPT_DE_RETOMADA` faz isso
   sozinho (checkpoint parado há 15 min com o processo vivo: mata e retoma). Não rode `pgrep -f` com o padrão
   dentro do próprio comando ssh: ele casa com o bash do ssh e o `kill` derruba a sessão (código 127).
+- O travamento no `torch.save` também pega o `m4_distill.py` (m7_emb_s2, 02/10): todo treino longo no Spark roda com o
+  `runs/supervise.sh`. Processos novos na GPU do Spark às vezes falham ao criar o contexto (CUDA_ERROR_OUT_OF_MEMORY
+  em cuDevicePrimaryCtxRetain), uma vez com só 4 GB de memória livre (60 GB em cache de arquivos) e outra com 16 GB;
+  na tentativa seguinte funcionou. `runs/cache_guard.sh` tira do cache os arquivos do projeto (posix_fadvise) quando a
+  livre cai abaixo de 12 GB, e a fila do M7 relança o treino que não chega ao primeiro checkpoint.
 - M6, primeiro teste (patina_a: PPO de patins partindo do conectoma que anda): de patins, ele cai em
   55–70% das tentativas de 5 s (a "Tentativa #1" do plano). Com ganhos por ligação, a divergência KL
   passou do alvo já na primeira época em toda iteração e a taxa caiu ao piso: o grupo "sinapses"
