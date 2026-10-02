@@ -4,7 +4,8 @@ Critérios do plano (docs/plano.md, captura fiel), sempre sobre o registro compl
 escolher a dedo:
 - números pré-registrados: #1, #10, #100, #1.000, #10.000...;
 - marcos automáticos: primeira tentativa acima de cada velocidade média, primeiro deslize
-  (≥25% do tempo deslizando a ≥1 cm/s) e cada novo recorde de distância;
+  (≥25% do tempo deslizando a ≥1 cm/s), cada novo recorde de distância e a primeira queda (este último
+  acrescentado em 02/10/2026, depois de ver o registro do treino final);
 - uma amostra aleatória fixa de 5% (semente registrada).
 
 Tentativas com empurrão inicial (ajuda do currículo) não contam para marcos e recordes e
@@ -59,6 +60,9 @@ def main() -> None:
     glide = next((a for a in unaided if a["glide_frac"] >= 0.25 and a["speed"] >= 1.0), None)
     if glide:
         pick(glide, "primeiro deslize (≥25% do tempo a ≥1 cm/s)")
+    fall = next((a for a in unaided if a["fell"]), None)
+    if fall:  # marco acrescentado em 02/10/2026, depois de ver o registro do final_s0 (o vídeo diz isso)
+        pick(fall, "primeira queda")
     record = 0.0
     for a in unaided:
         if a["distance"] > record + 0.05:  # recorde de distância (margem de 0,5 mm)

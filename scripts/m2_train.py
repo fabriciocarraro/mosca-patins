@@ -44,7 +44,7 @@ from mosca.rl.ppo import ActorCritic, PPOConfig, RunningNorm, compute_gae, ppo_u
 
 TEST_ATTEMPT_BASE = 10**9  # tentativas de teste: nunca aparecem no treino
 REWARD_FLAGS = ("w_vel", "sigma_vel", "sigma_vel_rel", "w_yaw", "sigma_yaw", "w_up", "w_roll", "sigma_roll", "w_slip",
-                "w_cot", "w_rate", "w_leg_floor", "w_contact", "w_glide")
+                "w_cot", "w_rate", "w_leg_floor", "w_contact", "w_glide", "w_sym")
 REWARD_CHOICES = {"vel_shape": ("tent", "gauss"), "roll_gated": ("yes", "no")}
 
 

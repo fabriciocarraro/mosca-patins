@@ -67,6 +67,10 @@ class RewardConfig:
     # Sem isso, com w_yaw alto, ficar parada (giro zero) rende a recompensa de giro inteira e a mosca não sai
     # do lugar. Com pedido de ficar parada (v < 0,5 cm/s), vale inteira.
     yaw_gated: bool = False
+    # Equilíbrio entre os lados: penalidade proporcional a |P_esq − P_dir| / (P_esq + P_dir), com P a potência
+    # mecânica dos atuadores das patas de cada lado, nos passos com pedido de movimento. Sem ela, as estratégias
+    # evolutivas chegam a uma marcha que empurra só com as patas esquerdas (final_s0).
+    w_sym: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -147,6 +151,7 @@ class SkateVecEnv:
 
         names = [f"{j}_{leg}" for leg in LEGS for j in LEG_JOINTS]
         self.leg_act = np.array([m.actuator(n).id for n in names])
+        self.leg_left = np.array([n.endswith("_left") for n in names])
         self.leg_qadr = np.array([m.jnt_qposadr[m.joint(n).id] for n in names])
         self.leg_dadr = np.array([m.jnt_dofadr[m.joint(n).id] for n in names])
         self.leg_actadr = m.actuator_actadr[self.leg_act]
@@ -216,7 +221,7 @@ class SkateVecEnv:
                              "distance": 0.0, "rolled": 0.0, "moved": 0.0, "glide_steps": 0,
                              "return": 0.0, "fell": False, "leg_floor": 0, "work": 0.0, "grounded": 0.0,
                              "yaw_cmd": 0.0 if yaw_cmd is None else float(yaw_cmd[i]), "yaw_sum": 0.0, "yaw_err": 0.0,
-                             "yaw_abs": 0.0}
+                             "yaw_abs": 0.0, "work_left": 0.0, "work_right": 0.0}
         self.v_cmd[:] = v_cmd
         self.yaw_cmd[:] = 0.0 if yaw_cmd is None else yaw_cmd
         self.ema_v[:] = push
@@ -339,7 +344,10 @@ class SkateVecEnv:
             slip = float(np.mean(np.abs(side[grounded])))
         else:
             r_roll, slip = 0.0, float(np.mean(np.abs(side[grounded]))) if grounded.any() else 0.0
-        power = np.abs(d.actuator_force[self.leg_act] * d.actuator_velocity[self.leg_act]).sum()
+        powers = np.abs(d.actuator_force[self.leg_act] * d.actuator_velocity[self.leg_act])
+        power = powers.sum()
+        p_left, p_right = powers[self.leg_left].sum(), powers[~self.leg_left].sum()
+        imbalance = abs(p_left - p_right) / (p_left + p_right) if self.v_cmd[i] >= 0.5 and power > 0 else 0.0
         cot = power / (self.weight * max(abs(v_fwd), 0.5))
         rate = float(np.mean((action - self.prev_action[i]) ** 2))
         contact = float(grounded.mean())
@@ -347,7 +355,7 @@ class SkateVecEnv:
                         and bool((np.abs(along[grounded]) > 0.7 * abs(v_fwd)).all()))
         reward = (rw.w_vel * r_vel + rw.w_yaw * r_yaw + rw.w_up * r_up + rw.w_roll * r_roll + rw.w_contact * contact
                   + rw.w_glide * gliding - rw.w_slip * slip - rw.w_cot * cot - rw.w_rate * rate
-                  - rw.w_leg_floor * leg_floor)
+                  - rw.w_leg_floor * leg_floor - rw.w_sym * imbalance)
 
         # Estatísticas da tentativa
         if update:
@@ -355,6 +363,8 @@ class SkateVecEnv:
             s["distance"] += v_fwd * cfg.control_dt
             s["leg_floor"] += leg_floor
             s["work"] += power * cfg.control_dt
+            s["work_left"] += p_left * cfg.control_dt
+            s["work_right"] += p_right * cfg.control_dt
             s["grounded"] += contact
             s["yaw_sum"] += yaw_rate * cfg.control_dt
             s["yaw_err"] += abs(self.ema_yaw[i] - self.yaw_cmd[i]) * cfg.control_dt
@@ -387,6 +397,8 @@ class SkateVecEnv:
             s["speed"] = s["distance"] / s["seconds"]
             s["rolling"] = s["rolled"] / s["moved"] if s["moved"] > 0 else 0.0
             s["glide_frac"] = s["glide_steps"] / steps
+            both = s["work_left"] + s["work_right"]
+            s["left_share"] = s["work_left"] / both if both > 0 else float("nan")  # fração do trabalho das patas esquerdas
             s["grounded_frac"] = s["grounded"] / steps
             s["yaw_rate"] = s["yaw_sum"] / s["seconds"]  # giro médio (rad/s)
             s["yaw_error"] = s["yaw_err"] / s["seconds"]  # erro médio do giro filtrado (ema_tau) em relação ao pedido
