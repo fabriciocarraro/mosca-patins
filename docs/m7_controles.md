@@ -105,3 +105,33 @@ As duas caminhadas terminaram as 30 iterações; a patinação parte do best.pt 
 Com esta receita de dois estágios, o conectoma real não aprendeu a andar e o embaralhado andou em parte. O real que
 anda (anda_r5I, M4) saiu de uma sequência mais longa de etapas, que o embaralhado não teve. A comparação da
 patinação mede a receita inteira a partir do zero, não a melhor caminhada que cada grafo consegue.
+
+## Braço extra: linhagem longa da caminhada (registrado em 02/10/2026, antes de rodar)
+
+Motivo: com a receita de dois estágios, o real não andou e o embaralhado andou em parte, então a comparação acima
+mistura o andar com o patinar. Este braço compara os dois grafos partindo da caminhada mais trabalhada de cada um.
+Os 9 treinos acima continuam como registrados.
+
+**Etapa A (andar), só no embaralhado.** A mesma sequência de etapas que produziu o anda_r5I, com o mesmo checkpoint
+de partida em cada uma:
+
+| Etapa | Parte de | Iterações |
+|---|---|---|
+| anda_r5L_emb | do zero (já existe, mesma receita do r5L) | — |
+| anda_r5H_emb | it00020 do r5L_emb | 80 |
+| anda_r5M_emb | best.pt do r5H_emb | 80 |
+| anda_r5D_emb | best.pt do r5M_emb | 20 (só até o it00020, o que a etapa seguinte usa) |
+| anda_r5I_emb | it00020 do r5D_emb | 40, e a patinação parte do best.pt |
+
+- Os argumentos de cada etapa saem do config.json da etapa real, trocando só execução, grafo, ponto de partida e nº
+  de iterações. `runs/m7l_cmd.py` confere que o parser devolve os mesmos argumentos.
+- As opções criadas depois das etapas reais ficam no valor padrão, que reproduz o comportamento de então.
+- Roda com o código de hoje; as etapas reais rodaram com o código de 26 a 28/09.
+
+**Etapa B (patinar).** A mesma receita e o mesmo orçamento dos braços acima (1000 gerações, sementes 0, 1 e 2):
+
+- `m7l_real_sN` parte de `runs/anda_r5I/best_it6.pt`, o conectoma que anda do M4;
+- `m7l_emb_sN` parte de `runs/anda_r5I_emb/best.pt`.
+
+**Métricas e regra de leitura:** as mesmas (`m7_eval.py`; diferença só com separação completa das 3 sementes na
+métrica primária). Se o embaralhado não andar no fim da etapa A, a patinação roda assim mesmo, como nos braços acima.
