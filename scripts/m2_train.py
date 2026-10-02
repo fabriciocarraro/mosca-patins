@@ -43,8 +43,8 @@ from mosca.paths import RUNS  # noqa: E402
 from mosca.rl.ppo import ActorCritic, PPOConfig, RunningNorm, compute_gae, ppo_update  # noqa: E402
 
 TEST_ATTEMPT_BASE = 10**9  # tentativas de teste: nunca aparecem no treino
-REWARD_FLAGS = ("w_vel", "sigma_vel", "sigma_vel_rel", "w_yaw", "w_up", "w_roll", "sigma_roll", "w_slip",
-                "w_cot", "w_rate", "w_leg_floor", "w_contact")
+REWARD_FLAGS = ("w_vel", "sigma_vel", "sigma_vel_rel", "w_yaw", "sigma_yaw", "w_up", "w_roll", "sigma_roll", "w_slip",
+                "w_cot", "w_rate", "w_leg_floor", "w_contact", "w_glide")
 REWARD_CHOICES = {"vel_shape": ("tent", "gauss"), "roll_gated": ("yes", "no")}
 
 
@@ -70,6 +70,12 @@ def parse_args() -> argparse.Namespace:
                    help="recompensa de giro pelo giro médio de 200 ms (o instantâneo inclui o balanço do corpo)")
     p.add_argument("--yaw-start", type=float, default=0.0, help="giro máximo no começo (rad/s)")
     p.add_argument("--yaw-switch", type=float, default=1.5, help="duração média de cada trecho de giro (s)")
+    p.add_argument("--yaw-gated", action="store_true",
+                   help="recompensa de giro proporcional ao acerto da velocidade (parada não ganha o giro inteiro)")
+    p.add_argument("--phase2-gen", type=int, default=0,
+                   help="iteração em que entram as tentativas paradas (--p-stand) e as curvas (antes, só retas)")
+    p.add_argument("--p-stand", type=float, default=0.0,
+                   help="fração das tentativas mandadas ficar paradas (velocidade pedida 0), a partir de --phase2-gen")
     p.add_argument("--yaw-tol", type=float, default=0.5, help="erro médio de giro para a tentativa contar (rad/s)")
     p.add_argument("--eval-yaw", type=float, default=1.0, help="giro das curvas da avaliação (rad/s)")
     p.add_argument("--init-std", type=float, default=1.0)
@@ -119,7 +125,7 @@ def main() -> None:
 
     reward_cfg = RewardConfig(**{name: getattr(args, name) for name in REWARD_FLAGS},
                               vel_shape=args.vel_shape, roll_gated=args.roll_gated == "yes",
-                              yaw_filtered=args.yaw_filtered)
+                              yaw_filtered=args.yaw_filtered, yaw_gated=args.yaw_gated)
     env_cfg = EnvConfig(n_envs=args.envs, n_threads=args.threads, control_dt=args.control_dt,
                         episode_seconds=args.episode_seconds, action_scale=args.action_scale,
                         action_clip=args.action_clip, seed=args.seed, reward=reward_cfg)
@@ -156,7 +162,11 @@ def main() -> None:
         p_push = max(0.0, 0.5 * (1 - it / args.push_iters)) if args.push_iters > 0 else 0.0
         push = np.where(rng.random(n) < p_push, v_cmd, 0.0)
         yaw_max = state.setdefault("yaw_max", 0.0)
-        yaw_sched = yaw_schedule(rng, n, horizon, yaw_max, args.yaw_switch / env_cfg.control_dt)
+        phase2 = it >= args.phase2_gen
+        if args.p_stand > 0 and phase2:  # tentativas mandadas ficar paradas, sem empurrão
+            stand = rng.random(n) < args.p_stand
+            v_cmd[stand], push[stand] = 0.0, 0.0
+        yaw_sched = yaw_schedule(rng, n, horizon, yaw_max if phase2 else 0.0, args.yaw_switch / env_cfg.control_dt)
         obs, priv = env.reset(attempts, v_cmd, push, yaw_cmd=yaw_sched[0])
         gen = torch.Generator().manual_seed(attempt_seed(args.seed, -1 - it))
 
@@ -213,11 +223,11 @@ def main() -> None:
         state["lr"], stats = ppo_update(ac, opt, batch, ppo_cfg, state["lr"], gen)
 
         episodes = env.episode_stats()
-        success = command_success(episodes, horizon, args.yaw_tol if args.yaw_final > 0 else None)
+        success = command_success(episodes, horizon, args.yaw_tol if args.yaw_final > 0 and phase2 else None)
         if success >= 0.8:  # currículo: primeiro a faixa de velocidade, depois a de giro
             if v_max < args.v_final:
                 state["v_max"] = min(args.v_final, v_max + args.v_step)
-            elif args.yaw_final > 0:
+            elif args.yaw_final > 0 and phase2:
                 state["yaw_max"] = min(args.yaw_final, yaw_max + args.yaw_step)
         state["it"] = it + 1
         state["total_steps"] += int(mask.sum())

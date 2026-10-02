@@ -72,7 +72,8 @@ def main() -> None:
     rows = []
     for number in sorted(picked):
         a = attempts[number]
-        rows.append({"video_number": number + 1, "attempt": number, "iteration": a["it"], "reasons": picked[number],
+        rows.append({"video_number": number + 1, "attempt": number, "iteration": a.get("it", a.get("gen")),
+                     "reasons": picked[number],
                      "push": a["push"], "fell": a["fell"], "seconds": a["seconds"], "speed": a["speed"],
                      "distance": a["distance"], "glide_frac": a["glide_frac"]})
     (run_dir / "milestones.json").write_text(json.dumps({"sample_seed": SAMPLE_SEED, "attempts": n, "picked": rows},
