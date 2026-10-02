@@ -92,3 +92,16 @@ As três sementes de cada braço aparecem todas, sem escolher.
   probabilidade 1/10 (1/20 para cada lado).
 - **Qualquer outro padrão é empate.**
 - As métricas 2 a 5 são descritivas.
+
+## Resultado da etapa A (02/10/2026, antes de qualquer resultado da patinação)
+
+As duas caminhadas terminaram as 30 iterações; a patinação parte do best.pt de cada uma, como registrado.
+
+| Grafo | best.pt | Retas de 5 s (1 / 2 / 3 cm/s) | Velocidades | DNa02 lado certo | Quedas |
+|---|---|---|---|---|---|
+| Real | iteração 3 | 0% (0% / 0% / 0%) | 0,02 / 0,02 / 0,03 cm/s | 38% | 8% |
+| Embaralhado | iteração 27 | 42% (94% / 0% / 31%) | 0,91 / 0,00 / 1,22 cm/s | 94% (efeito ~0) | 2% |
+
+Com esta receita de dois estágios, o conectoma real não aprendeu a andar e o embaralhado andou em parte. O real que
+anda (anda_r5I, M4) saiu de uma sequência mais longa de etapas, que o embaralhado não teve. A comparação da
+patinação mede a receita inteira a partir do zero, não a melhor caminhada que cada grafo consegue.
