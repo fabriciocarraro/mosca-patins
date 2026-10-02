@@ -74,7 +74,7 @@ def main() -> None:
         a = attempts[number]
         rows.append({"video_number": number + 1, "attempt": number, "iteration": a.get("it", a.get("gen")),
                      "reasons": picked[number],
-                     "push": a["push"], "fell": a["fell"], "seconds": a["seconds"], "speed": a["speed"],
+                     "v_cmd": a.get("v_cmd"), "push": a["push"], "fell": a["fell"], "seconds": a["seconds"], "speed": a["speed"],
                      "distance": a["distance"], "glide_frac": a["glide_frac"]})
     (run_dir / "milestones.json").write_text(json.dumps({"sample_seed": SAMPLE_SEED, "attempts": n, "picked": rows},
                                                         indent=2, ensure_ascii=False), encoding="utf-8")
@@ -83,7 +83,9 @@ def main() -> None:
           f"{args.sample:.0%}) -> {run_dir / 'milestones.json'}")
     for r in marks:
         aid = " (com empurrão)" if r["push"] else ""
-        print(f"  #{r['video_number']:<7d} iteração {r['iteration']:4d}: {'; '.join(r['reasons'])}{aid} | "
+        asked = "" if r["v_cmd"] is None else \
+            (" (pedido: ficar parada)" if r["v_cmd"] == 0 else f" (pedido {r['v_cmd']:.1f} cm/s)")
+        print(f"  #{r['video_number']:<7d} iteração {r['iteration']:4d}: {'; '.join(r['reasons'])}{aid}{asked} | "
               f"{r['speed']:5.2f} cm/s, {r['distance']:5.2f} cm, deslizando {r['glide_frac']:.0%}, "
               f"{'caiu' if r['fell'] else 'não caiu'} em {r['seconds']:.2f} s")
 

@@ -16,7 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
-render = ["pillow>=10"]
+render = ["pillow>=10", "matplotlib>=3.8"]
 data = ["remotezip>=0.12", "h5py>=3.10"]
 search = ["cma>=4"]
 brain = ["pandas>=2.1", "pyarrow>=15"]
