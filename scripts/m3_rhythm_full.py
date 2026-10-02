@@ -18,11 +18,16 @@ Uso:
     python scripts/download_assets.py --malecns --pugliese --malecns-stats
     python scripts/m3_vnc_weights.py && python scripts/m3_build_graph.py
     python scripts/m3_rhythm_full.py --stim DNg100_R --replicates 4
+    python scripts/m3_rhythm_full.py --stim DNg100_R --replicates 1 --save-trace runs/video/ritmo_dng100.npz
+
+`--save-trace` grava a atividade de todos os neurônios da réplica 0 (a cada 2 ms) para o painel do cérebro do vídeo
+(`m8_render.py`).
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -69,6 +74,7 @@ def main() -> None:
     parser.add_argument("--replicates", type=int, default=4)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--seconds", type=float, default=2.0)
+    parser.add_argument("--save-trace", default="", help="grava a atividade de toda a rede na réplica 0 (.npz)")
     args = parser.parse_args()
 
     c = Connectome.load(Path(args.graph))
@@ -92,17 +98,30 @@ def main() -> None:
     for k in range(args.replicates):
         net = RateNet(w, sample_params(sizes, np.random.default_rng(args.seed + k), reference=reference))
         t0 = time.perf_counter()
-        rec = simulate(net, current, seconds=args.seconds, h=h, record=motor)
-        whole = rhythm(rec.rates, rec.peak, h, skip)
+        full = bool(args.save_trace) and k == 0
+        rec = simulate(net, current, seconds=args.seconds, h=h, record=None if full else motor)
+        rates = rec.rates[motor] if full else rec.rates
+        whole = rhythm(rates, rec.peak, h, skip)
         print(f"\nréplica {k}: nota {whole.score:.3f}, {whole.freq_hz:5.2f} Hz, {whole.active_motor} motores ativos, "
               f"{whole.active} neurônios ativos na rede ({time.perf_counter() - t0:.0f} s)")
         period = round(1.0 / (whole.freq_hz * h)) if np.isfinite(whole.freq_hz) and whole.freq_hz > 0 else 0
-        phases = leg_phases(rec.rates, local, period, round(skip / h)) if period > 2 else np.full(len(LEGS), np.nan)
+        phases = leg_phases(rates, local, period, round(skip / h)) if period > 2 else np.full(len(LEGS), np.nan)
         for leg, idx, phase in zip(LEGS, local, phases):
-            res = rhythm(rec.rates[idx], rec.peak, h, skip)
-            peak_rate = rec.rates[idx].max() if len(idx) else 0.0
+            res = rhythm(rates[idx], rec.peak, h, skip)
+            peak_rate = rates[idx].max() if len(idx) else 0.0
             print(f"  {leg:9s} {res.active_motor:3d}/{len(idx):3d} ativos, nota {res.score:.3f}, "
                   f"{res.freq_hz:5.2f} Hz, pico {peak_rate:6.1f} Hz, fase {phase:+.2f}")
+        if full:
+            every = round(0.002 / h)
+            out = Path(args.save_trace)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            meta = {"mode": "ritmo", "graph": Path(args.graph).name, "stim": args.stim, "current": args.current,
+                    "size_ref": args.size_ref, "seed": args.seed, "replicate": k, "control_dt": every * h,
+                    "pulse": [0.02, 1.999], "freq_hz": float(whole.freq_hz), "score": float(whole.score),
+                    "active_motor": int(whole.active_motor), "untrained": True}
+            np.savez_compressed(out, rates=rec.rates[:, 1::every].T.astype(np.float16), body_id=c.body_id,
+                                meta=json.dumps(meta, ensure_ascii=False))
+            print(f"  atividade de {c.n} neurônios a cada {every * h * 1e3:g} ms -> {out}")
 
 
 if __name__ == "__main__":
