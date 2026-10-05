@@ -89,3 +89,13 @@ Ramificações abertas, com o custo de energia entrando depois do primeiro movim
 - **mlp_c1b:** a mlp_c1 a partir da iteração 125 (quando ainda patinava com os seis no chão), com `--w-cot 0.2`.
 
 O evolui_q continua sem custo, como controle. A regra de decisão passa a comparar evolui_q e evolui_q2.
+
+## Terceira ramificação (05/10/2026, 20h)
+
+O usuário achou a marcha da mlp_c3 (pedindo 2 cm/s) "muito mais natural". Para testar o conectoma na mesma condição,
+foi aberta a **evolui_q3**: o evolui_q a partir da geração 219, com o custo de energia da mlp_c3 (`--w-cot 0.5`) e
+velocidade-alvo de 2,5 cm/s (`--v-final 2.5`, contra 4 na receita final).
+
+Baixar a velocidade-alvo mudaria o critério do M2 (≥3 cm/s pedindo 3,5), que é decisão do usuário: esta ramificação só
+dá o dado. A regra de decisão compara evolui_q, evolui_q2 e evolui_q3 pelos critérios 1 a 5. Na q3, os critérios de
+velocidade (4) são lidos à velocidade-alvo dela (2,5 pedidos, ≥2 cm/s de média) e ficam marcados como tal.
