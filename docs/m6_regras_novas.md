@@ -66,3 +66,26 @@ evolui_o continua.
 
 A regra de decisão passa a comparar evolui_o e evolui_q, com os mesmos critérios 1 a 5. No empate, fica o evolui_q, o
 de regra mais simples.
+
+## Segundo desvio (05/10/2026, 19h50)
+
+Resultados das MLPs na iteração 400:
+
+- **mlp_c3 (custo de energia 0,5):** pedindo 2 cm/s, é a marcha natural. Os seis patins ficam no chão 92–100% do tempo,
+  as duas patas do meio dividem o empurrão (36% e 47%), desliza 99% e anda reto. Mas não passou de 2 cm/s no currículo
+  e, pedindo 3,5, fica parada.
+- **mlp_c1 (só `--count-lifted`):** chega a 4,1 cm/s pedindo 3,5, mas voltou a levantar as patas do meio para remadas
+  longas (meio D só 16% no chão). Desliza com os seis no chão só 2% do tempo, contra 70% na iteração 125.
+
+Nos conectomas:
+
+- **evolui_o (custo de energia desde a geração 0):** continuou parado (0,21 cm/s na geração 226) e foi interrompido.
+- **evolui_q:** anda (2,5–2,9 cm/s pedindo 2), mas com o mesmo chute da pata do meio esquerda (77% do empurrão), fazendo
+  curva (−0,95 rad/s) e quase sem deslizar com os seis.
+
+Ramificações abertas, com o custo de energia entrando depois do primeiro movimento, como o plano previa:
+
+- **evolui_q2:** o evolui_q a partir da geração 164, com `--w-cot 0.2`.
+- **mlp_c1b:** a mlp_c1 a partir da iteração 125 (quando ainda patinava com os seis no chão), com `--w-cot 0.2`.
+
+O evolui_q continua sem custo, como controle. A regra de decisão passa a comparar evolui_q e evolui_q2.
