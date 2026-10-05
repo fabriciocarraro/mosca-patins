@@ -135,3 +135,28 @@ de partida em cada uma:
 
 **Métricas e regra de leitura:** as mesmas (`m7_eval.py`; diferença só com separação completa das 3 sementes na
 métrica primária). Se o embaralhado não andar no fim da etapa A, a patinação roda assim mesmo, como nos braços acima.
+
+## Pausa (05/10/2026, decidida pelo usuário)
+
+A análise da marcha (`scripts/m8_gait.py`) mostrou que nenhum braço patina como um animal faria:
+
+- **Conectoma real:** desliza sobre dois patins de um lado e chuta com a pata do meio esquerda, com duas patas no ar.
+- **Embaralhado:** anda de lado, em círculos.
+- **MLP:** desliza sobre três patins, com três no ar.
+
+A causa provável é a recompensa. O rolamento e o deslize contavam só os patins apoiados, então levantar patins
+compensava. A receita vai ser corrigida (patins no ar passam a contar, custo de energia do plano ligado) e testada
+antes de um novo treino final.
+
+Como a comparação do vídeo precisa usar a mesma receita do treino final, o M7 foi pausado com os checkpoints guardados:
+
+| Treino | Geração em que parou |
+|---|---|
+| m7p_real_s2 | 748 |
+| m7p_emb_s2 | 307 |
+| m7l_real_s1 | 31 |
+| m7l_emb_s1 | 26 |
+| m7p_mlp_s2, m7l_real_s2, m7l_emb_s2 | não começaram |
+
+Os treinos já terminados ficam como resultado da receita antiga. Com a receita nova, o M7 será registrado de novo antes
+de rodar.
