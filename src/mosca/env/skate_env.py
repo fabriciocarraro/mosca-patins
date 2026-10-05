@@ -71,6 +71,10 @@ class RewardConfig:
     # mecânica dos atuadores das patas de cada lado, nos passos com pedido de movimento. Sem ela, as estratégias
     # evolutivas chegam a uma marcha que empurra só com as patas esquerdas (final_s0).
     w_sym: float = 0.0
+    # Patins no ar contam (05/10/2026): o rolamento vira a média dos seis patins (patim no ar vale 0) e o deslize só
+    # conta com os seis no chão, rolando. Sem isso, levantar o patim que freia ou empurra aumenta os dois termos, e todos
+    # os controladores (conectoma e MLP) aprenderam a patinar com duas ou três patas no ar.
+    count_lifted: bool = False
 
 
 @dataclass(frozen=True)
@@ -221,7 +225,7 @@ class SkateVecEnv:
                              "distance": 0.0, "rolled": 0.0, "moved": 0.0, "glide_steps": 0,
                              "return": 0.0, "fell": False, "leg_floor": 0, "work": 0.0, "grounded": 0.0,
                              "yaw_cmd": 0.0 if yaw_cmd is None else float(yaw_cmd[i]), "yaw_sum": 0.0, "yaw_err": 0.0,
-                             "yaw_abs": 0.0, "work_left": 0.0, "work_right": 0.0}
+                             "yaw_abs": 0.0, "work_left": 0.0, "work_right": 0.0, "glide6_steps": 0}
         self.v_cmd[:] = v_cmd
         self.yaw_cmd[:] = 0.0 if yaw_cmd is None else yaw_cmd
         self.ema_v[:] = push
@@ -338,7 +342,8 @@ class SkateVecEnv:
             r_yaw *= min(max(self.ema_v[i], 0.0) / self.v_cmd[i], 1.0)
         r_up = max(up_z, 0.0)
         if grounded.any() and self.v_cmd[i] >= 0.5:
-            r_roll = float(np.mean(np.exp(-(((along[grounded] - v_fwd) / rw.sigma_roll) ** 2))))
+            score = np.exp(-(((along - v_fwd) / rw.sigma_roll) ** 2))
+            r_roll = float(np.mean(np.where(grounded, score, 0.0)) if rw.count_lifted else np.mean(score[grounded]))
             if rw.roll_gated:
                 r_roll *= min(max(v_fwd, 0.0) / self.v_cmd[i], 1.0)
             slip = float(np.mean(np.abs(side[grounded])))
@@ -353,6 +358,9 @@ class SkateVecEnv:
         contact = float(grounded.mean())
         gliding = float(grounded.any() and self.v_cmd[i] >= 0.5 and abs(v_fwd) > 0.5
                         and bool((np.abs(along[grounded]) > 0.7 * abs(v_fwd)).all()))
+        glide6 = bool(grounded.all() and abs(v_fwd) > 0.5 and (np.abs(along) > 0.7 * abs(v_fwd)).all())
+        if rw.count_lifted:  # deslize só com os seis patins no chão, rolando
+            gliding = float(glide6 and self.v_cmd[i] >= 0.5)
         reward = (rw.w_vel * r_vel + rw.w_yaw * r_yaw + rw.w_up * r_up + rw.w_roll * r_roll + rw.w_contact * contact
                   + rw.w_glide * gliding - rw.w_slip * slip - rw.w_cot * cot - rw.w_rate * rate
                   - rw.w_leg_floor * leg_floor - rw.w_sym * imbalance)
@@ -375,6 +383,7 @@ class SkateVecEnv:
                 s["moved"] += speed * int(grounded.sum())
                 if speed > 0.5 and (np.abs(along[grounded]) > 0.7 * speed).all():
                     s["glide_steps"] += 1
+            s["glide6_steps"] += int(glide6)
 
         qpos = d.qpos[self.leg_qadr] - self.rest[0][self.leg_qadr]
         qvel = d.qvel[self.leg_dadr]
@@ -397,6 +406,7 @@ class SkateVecEnv:
             s["speed"] = s["distance"] / s["seconds"]
             s["rolling"] = s["rolled"] / s["moved"] if s["moved"] > 0 else 0.0
             s["glide_frac"] = s["glide_steps"] / steps
+            s["glide6_frac"] = s.get("glide6_steps", 0) / steps  # deslizando com os seis patins no chão
             both = s["work_left"] + s["work_right"]
             s["left_share"] = s["work_left"] / both if both > 0 else float("nan")  # fração do trabalho das patas esquerdas
             s["grounded_frac"] = s["grounded"] / steps

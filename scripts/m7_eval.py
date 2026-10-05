@@ -93,6 +93,8 @@ def summarize(eps: list[dict], seconds: float) -> dict:
     return {"m2_fast": fast, "m2_glide": glide, "m2_falls": falls, "m2_ok": fast >= 0.8 and glide >= 0.25 and falls < 0.1,
             "m2_speed": float(np.mean([e["speed"] for e in m2])),
             "m2_left_share": float(np.nanmean([e.get("left_share", np.nan) for e in m2])),  # descritiva, de 02/10
+            "m2_glide6": float(np.nanmean([e.get("glide6_frac", np.nan) for e in m2])),  # descritiva, de 05/10
+            "m2_grounded": float(np.mean([e["grounded_frac"] for e in m2])),  # fração dos patins no chão
             "turn_left": float(np.mean(left)), "turn_right": float(np.mean(right)),
             "turn_range": float(np.mean(left) - np.mean(right)), "turn_ok": turn_ok,
             "turn_falls": float(np.mean([e["fell"] for e in turn])),

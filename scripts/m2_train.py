@@ -70,6 +70,8 @@ def parse_args() -> argparse.Namespace:
                    help="recompensa de giro pelo giro médio de 200 ms (o instantâneo inclui o balanço do corpo)")
     p.add_argument("--yaw-start", type=float, default=0.0, help="giro máximo no começo (rad/s)")
     p.add_argument("--yaw-switch", type=float, default=1.5, help="duração média de cada trecho de giro (s)")
+    p.add_argument("--count-lifted", action="store_true",
+                   help="rolamento pela média dos seis patins (no ar vale 0) e deslize só com os seis no chão")
     p.add_argument("--yaw-gated", action="store_true",
                    help="recompensa de giro proporcional ao acerto da velocidade (parada não ganha o giro inteiro)")
     p.add_argument("--phase2-gen", type=int, default=0,
@@ -106,7 +108,8 @@ def evaluate(env: SkateVecEnv, ac: ActorCritic, norm_obs: RunningNorm, speed: fl
         obs, *_ = env.step(action)
     eps = env.episode_stats()
     return {f"eval_{k}": float(np.nanmean([e[k] for e in eps]))
-            for k in ("speed", "rolling", "glide_frac", "fell", "seconds", "grounded_frac", "cot", "yaw_error")}
+            for k in ("speed", "rolling", "glide_frac", "glide6_frac", "fell", "seconds", "grounded_frac", "cot",
+                      "yaw_error")}
 
 
 def save(path: Path, ac, opt, norm_obs, norm_priv, state, env_cfg, args) -> None:
@@ -125,7 +128,8 @@ def main() -> None:
 
     reward_cfg = RewardConfig(**{name: getattr(args, name) for name in REWARD_FLAGS},
                               vel_shape=args.vel_shape, roll_gated=args.roll_gated == "yes",
-                              yaw_filtered=args.yaw_filtered, yaw_gated=args.yaw_gated)
+                              yaw_filtered=args.yaw_filtered, yaw_gated=args.yaw_gated,
+                              count_lifted=args.count_lifted)
     env_cfg = EnvConfig(n_envs=args.envs, n_threads=args.threads, control_dt=args.control_dt,
                         episode_seconds=args.episode_seconds, action_scale=args.action_scale,
                         action_clip=args.action_clip, seed=args.seed, reward=reward_cfg)
@@ -248,7 +252,8 @@ def main() -> None:
             ev = evaluate(env, ac, norm_obs, eval_speed, eval_yaw)
             metrics.update(ev, eval_v_cmd=eval_speed, eval_yaw_cmd=eval_yaw)
             print(f"      avaliação sem ruído a {eval_speed:g} cm/s: vel {ev['eval_speed']:.2f}, rolamento "
-                  f"{ev['eval_rolling']:.2f}, desliza {ev['eval_glide_frac']:.2f}, quedas {ev['eval_fell']:.0%}, "
+                  f"{ev['eval_rolling']:.2f}, desliza {ev['eval_glide_frac']:.2f} (com os seis no chão "
+                  f"{ev['eval_glide6_frac']:.2f}), quedas {ev['eval_fell']:.0%}, "
                   f"patins no chão {ev['eval_grounded_frac']:.2f}, erro de giro {ev['eval_yaw_error']:.2f} rad/s"
                   + (f" (curvas de ±{eval_yaw:g})" if eval_yaw > 0 else ""), flush=True)
         with open(run_dir / "metrics.jsonl", "a", encoding="utf-8") as f:

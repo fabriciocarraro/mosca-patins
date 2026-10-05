@@ -39,7 +39,7 @@ from mosca.rl.es import PopulationES  # noqa: E402
 
 TEST_ATTEMPT_BASE = 10**9
 REWARD_FLAGS = ("w_vel", "w_yaw", "sigma_yaw", "w_up", "w_roll", "sigma_roll", "w_slip", "w_rate", "w_leg_floor",
-                "w_glide", "w_sym")
+                "w_glide", "w_sym", "w_cot")
 
 
 def parse_args() -> argparse.Namespace:
@@ -97,6 +97,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--yaw-tol", type=float, default=0.5, help="erro médio de giro filtrado para a tentativa contar (rad/s)")
     p.add_argument("--eval-yaw", type=float, default=1.0, help="giro das curvas da avaliação (rad/s)")
     p.add_argument("--save-every", type=int, default=25)
+    p.add_argument("--count-lifted", action="store_true",
+                   help="rolamento pela média dos seis patins (no ar vale 0) e deslize só com os seis no chão")
     p.add_argument("--yaw-gated", action="store_true",
                    help="a recompensa de giro só paga na proporção em que a mosca anda na velocidade pedida")
     p.add_argument("--yaw-filtered", action="store_true",
@@ -155,7 +157,7 @@ def main() -> None:
     run_dir = RUNS / args.run
     (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
     reward_cfg = RewardConfig(**{name: getattr(args, name) for name in REWARD_FLAGS}, yaw_filtered=args.yaw_filtered,
-                              yaw_gated=args.yaw_gated)
+                              yaw_gated=args.yaw_gated, count_lifted=args.count_lifted)
     env_cfg = EnvConfig(n_envs=args.envs, n_threads=args.threads, episode_seconds=args.episode_seconds,
                         control_dt=args.control_dt, action_scale=args.action_scale, action_clip=args.action_clip,
                         seed=args.seed, reward=reward_cfg)
@@ -294,11 +296,12 @@ def main() -> None:
                            eval_yaw_error=float(np.mean([e["yaw_error"] for e in ev_move])))
             metrics.update(eval_v_cmd=speed, eval_speed=float(np.mean([e["speed"] for e in ev_move])),
                            eval_glide=float(np.mean([e["glide_frac"] for e in ev_move])),
+                           eval_glide6=float(np.mean([e.get("glide6_frac", np.nan) for e in ev_move])),
                            eval_fell=float(np.mean([e["fell"] for e in ev])))
             score = level + eval_success  # o nível do currículo manda; no mesmo nível, o acerto
             best = score > state.get("best_score", -1.0)
             print(f"      avaliação da média a {speed:g} cm/s: vel {metrics['eval_speed']:.2f}, desliza "
-                  f"{metrics['eval_glide']:.2f}, quedas {metrics['eval_fell']:.0%}, acerto {eval_success:.0%}"
+                  f"{metrics['eval_glide']:.2f} (com os seis no chão {metrics['eval_glide6']:.2f}), quedas {metrics['eval_fell']:.0%}, acerto {eval_success:.0%}"
                   + (f", curvas ±{eval_yaw:g} rad/s, erro de giro {metrics['eval_yaw_error']:.2f}" if eval_yaw > 0 else "")
                   + (f", fica parada quando pedido em {stand_ok:.0%}" if stand.any() else "")
                   + (" (melhor até agora)" if best else ""),
