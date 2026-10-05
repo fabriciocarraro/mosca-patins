@@ -48,3 +48,21 @@ quando cumpre todos estes critérios:
 - Se nenhuma cumprir os critérios 1 a 3, a decisão volta ao usuário: as opções seguintes são o patim com a ponta para
   fora (alavanca do plano) ou ensinar o gesto.
 - As MLPs servem de diagnóstico: mostram se a tarefa, com as regras novas, leva uma rede livre a uma marcha natural.
+
+## Desvio do teste (05/10/2026, 15h30, antes de qualquer resultado de conectoma)
+
+Situação na geração ~70:
+
+- **Os dois conectomas com custo de energia estão parados:** 0,10 cm/s no evolui_o (custo 0,2) e 0,15 cm/s no evolui_p
+  (custo 0,5), pedindo 2. Na mesma altura, o treino final já andava a 1,2 cm/s.
+- **As MLPs com custo de energia (mlp_c2 e mlp_c3) também ficam paradas quando se pede 3,5.**
+- **A MLP só com `--count-lifted` (mlp_c1) já patina:** 3,44 cm/s pedindo 3,5, os seis patins no chão 89–97% do tempo,
+  empurrão dividido entre as duas patas do meio (41% esquerda, 58% direita), reto.
+
+O plano original dizia que o custo de transporte "só entra depois do primeiro movimento", e o teste o ligou desde a
+geração 0. Por isso o evolui_p (custo 0,5) foi parado na geração ~70 e substituído pelo **evolui_q**: a mesma receita,
+só com `--count-lifted`. O custo de energia poderá entrar depois do primeiro movimento, numa retomada registrada. O
+evolui_o continua.
+
+A regra de decisão passa a comparar evolui_o e evolui_q, com os mesmos critérios 1 a 5. No empate, fica o evolui_q, o
+de regra mais simples.
