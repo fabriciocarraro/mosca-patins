@@ -184,3 +184,12 @@ cada etapa está no README.
   `--w-yaw 1.0`. A média pode piorar enquanto a população melhora (a evolução otimiza o retorno esperado sob
   perturbação): avalie sempre a média.
 
+- Marcha (05/10, `m8_gait.py`: contato, ângulo e força de cada patim num teste fixo): nenhum controlador patina como um
+  animal faria. O treino final e o real da linhagem longa deslizam sobre a frente e a trás direitas, empurram só com a
+  pata do meio esquerda (74–86% do empurrão) e deixam a frente e a trás esquerdas no ar o tempo todo; o embaralhado da
+  linhagem longa anda de lado (patins a ~37° do rumo), em círculos, com a frente direita e a trás esquerda no ar; a MLP
+  desliza sobre três patins e empurra com as duas patas do meio. Causa provável na recompensa: o rolamento é a média só
+  dos patins apoiados e o deslize exige que todos os apoiados rolem, então levantar o patim que freia ou empurra aumenta
+  os dois; levantar não custa nada (`w_contact` e `w_cot` desligados). O mesmo vale para a métrica "desliza" do critério
+  do M2. A fração do trabalho por lado (`left_share`) conta patas balançando no ar e engana: o embaralhado também é
+  assimétrico (diagonal no ar). Antes de ler números de deslize, olhe o diagrama de contato.

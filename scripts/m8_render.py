@@ -143,6 +143,9 @@ class Trace:
         m = self.meta
         if m.get("mode") == "teste":
             label = INTERVENTIONS.get(m["intervention"], m["intervention"].replace("_", " "))
+            if m["intervention"] == "base" and getattr(self, "by_graph", False):
+                name = "Conectoma embaralhado" if "shuffled" in m.get("graph", "") else "Conectoma real"
+                return name, f"teste {m['test'] + 1} · geração {m['generation']} · sem variação"
             return f"Teste {m['test'] + 1} · {label}", f"geração {m['generation']} · teste, sem variação"
         return f"Tentativa #{m['video_number']:,}".replace(",", "."), f"geração {m['generation']}"
 
@@ -290,6 +293,9 @@ def main() -> None:
         return
 
     traces = [Trace(args.trace)] + ([Trace(args.compare)] if args.compare else [])
+    if len({tr.meta.get("graph") for tr in traces}) > 1:  # real × embaralhado: o título diz qual é qual
+        for tr in traces:
+            tr.by_graph = True
     graph = Connectome.load(MALECNS_DIR / traces[0].meta.get("graph", "controller_graph_min5.npz"))
     panel = BrainPanel(graph, MALECNS_DIR / "controller_positions.npz")
     width = FLY_W if len(traces) == 1 else W // 2
