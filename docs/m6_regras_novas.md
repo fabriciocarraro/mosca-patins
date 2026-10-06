@@ -99,3 +99,21 @@ velocidade-alvo de 2,5 cm/s (`--v-final 2.5`, contra 4 na receita final).
 Baixar a velocidade-alvo mudaria o critério do M2 (≥3 cm/s pedindo 3,5), que é decisão do usuário: esta ramificação só
 dá o dado. A regra de decisão compara evolui_q, evolui_q2 e evolui_q3 pelos critérios 1 a 5. Na q3, os critérios de
 velocidade (4) são lidos à velocidade-alvo dela (2,5 pedidos, ≥2 cm/s de média) e ficam marcados como tal.
+
+## Resultado (06/10/2026)
+
+Medido pelo `m8_gait.py` no teste fixo 1 e pelo `m7_eval.py`:
+
+| Execução | Critério 1 (patins no chão) | 2 (empurrão dividido) | 3 (desliza com os seis) | 4 (M2) | 5 (reto) |
+|---|---|---|---|---|---|
+| evolui_q (geração 500) | não: meio D no ar o tempo todo, média 49% | sim (meio E 52%; esquerda 68%, direita 32%) | não (0%) | sim (3,14 cm/s, 100% ≥3) | sim (−0,11 rad/s) |
+| evolui_q2 (geração 500) | não | não | não | não (parada, 0,2 cm/s) | — |
+| evolui_q3 (geração 500) | não | não | não | não (parada, 0,2 cm/s) | — |
+| mlp_c1b (MLP, iteração 400) | sim (66–95%, média 84%) | sim (meio D 58%, meio E 32%) | sim (41%) | 3,11 cm/s no teste fixo | sim (−0,12 rad/s) |
+
+- **O custo de energia faz o conectoma parar,** desde a geração 0 (evolui_o) ou depois do primeiro movimento (evolui_q2 e
+  q3). Na MLP isso não acontece: com o mesmo custo, ela mantém a marcha natural e faz curvas de ±1 rad/s com erro de
+  0,15 rad/s.
+- **Só com `--count-lifted`, o conectoma real volta ao chute com a pata do meio esquerda,** agora com mais patins no
+  chão. É a quinta vez que ele chega a esse gesto.
+- **Nenhuma variante de conectoma cumpre os critérios 1 a 3.** Pela regra registrada, a decisão volta ao usuário.

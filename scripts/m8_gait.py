@@ -240,12 +240,14 @@ def main() -> None:
     a, stats, dt, kind = run_test(args.checkpoint, args.speed, args.test, args.yaw, args.seconds, torch.device(args.device))
     summary = {"checkpoint": args.checkpoint, "tipo": kind, "teste": args.test, "pedido_cm_s": args.speed,
                "giro_pedido": args.yaw, "segundos": stats["seconds"], "caiu": bool(stats["fell"]),
-               "desliza": stats["glide_frac"], **summarize(a, dt, 1.0)}
+               "desliza": stats["glide_frac"], "desliza_seis": stats.get("glide6_frac", float("nan")),
+               "patins_no_chao": stats["grounded_frac"], **summarize(a, dt, 1.0)}
     Path("outputs").mkdir(exist_ok=True)
     (Path("outputs") / f"{args.name}_marcha.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False),
                                                               encoding="utf-8")
     title = (f"{args.name} ({kind}): {summary['vel_media']:.2f} cm/s pedindo {args.speed:g}, "
-             f"giro {summary['giro_medio']:+.2f} rad/s, desliza {summary['desliza']:.0%}")
+             f"giro {summary['giro_medio']:+.2f} rad/s, desliza {summary['desliza']:.0%} "
+             f"(com os seis no chão {summary['desliza_seis']:.0%})")
     plot(a, dt, summary, title, Path("outputs") / f"{args.name}_marcha.png", tuple(args.window))
     print(title)
     print(f"{'patim':10s} {'no chão':>8s} {'ângulo':>8s} {'faixa':>14s} {'empurrão':>9s} {'freio/emp':>9s} "

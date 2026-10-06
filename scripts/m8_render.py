@@ -285,6 +285,7 @@ def main() -> None:
     p.add_argument("--distance", type=float, default=0.9, help="distância da câmera (cm)")
     p.add_argument("--elevation", type=float, default=-30.0, help="graus; abaixo de −23 o horizonte sai do quadro")
     p.add_argument("--label", default="", help="rótulo extra (ex.: 'treino, com variação da população')")
+    p.add_argument("--titles", nargs="+", default=None, help="título de cada lado (substitui o automático)")
     p.add_argument("--rate-ref", type=float, default=0.0,
                    help="taxa (Hz) de brilho cheio; padrão 60, e na cena do ritmo o percentil 90 dos picos")
     args = p.parse_args()
@@ -317,6 +318,8 @@ def main() -> None:
         for col, tr in enumerate(traces):
             qpos, rates, speed = tr.at(t)
             title, subtitle = tr.title()
+            if args.titles and col < len(args.titles):
+                title = args.titles[col]
             if args.label:
                 subtitle += f" · {args.label}"
             lines = [f"t = {br(min(t, tr.seconds), 3)} s   ·   câmera lenta {args.slow:g}×",
