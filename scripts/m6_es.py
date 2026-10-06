@@ -39,7 +39,7 @@ from mosca.rl.es import PopulationES  # noqa: E402
 
 TEST_ATTEMPT_BASE = 10**9
 REWARD_FLAGS = ("w_vel", "w_yaw", "sigma_yaw", "w_up", "w_roll", "sigma_roll", "w_slip", "w_rate", "w_leg_floor",
-                "w_glide", "w_sym", "w_cot")
+                "w_glide", "w_sym", "w_cot", "w_contact")
 
 
 def parse_args() -> argparse.Namespace:

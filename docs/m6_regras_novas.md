@@ -117,3 +117,25 @@ Medido pelo `m8_gait.py` no teste fixo 1 e pelo `m7_eval.py`:
 - **Só com `--count-lifted`, o conectoma real volta ao chute com a pata do meio esquerda,** agora com mais patins no
   chão. É a quinta vez que ele chega a esse gesto.
 - **Nenhuma variante de conectoma cumpre os critérios 1 a 3.** Pela regra registrada, a decisão volta ao usuário.
+
+## Regra de apoio (registrada em 06/10/2026, antes de rodar; escolhida pelo usuário)
+
+Termo `--w-contact`: a cada passo, paga a fração dos seis patins que estão no chão. Ele já existia no ambiente (peso 0)
+e passa a ser exposto no `m6_es.py`. Segue `--count-lifted`, sem custo de energia.
+
+- Diferente do custo de energia, este termo não pune o movimento: ficar parada com os seis no chão rende `w` por passo, e
+  patinar como o evolui_q rende ~2,6 + 0,55·`w`. Mexer-se continua valendo mais enquanto `w` < ~5.
+- Na geração 500 do evolui_q, 55% dos patins estavam no chão, e esse número não mudou da geração 100 à 500.
+
+| Execução | Parte de | Regra de apoio | Duração |
+|---|---|---|---|
+| evolui_r | evolui_q, geração 500 | `--w-contact 1.0` | até a geração 1000 |
+| evolui_s | evolui_q, geração 500 | `--w-contact 2.0` | até a geração 1000 |
+| evolui_t | do zero (anda_r5I) | `--w-contact 1.0` | 500 gerações |
+
+**Critérios e regra de decisão:**
+
+- Os mesmos critérios 1 a 5. Segue para o novo treino final a variante que cumprir mais critérios no fim (no empate, a de
+  `w` menor).
+- Se nenhuma cumprir os critérios 1 a 3, a decisão volta ao usuário: ensinar o gesto, patim com a ponta para fora ou
+  usar o que temos.
