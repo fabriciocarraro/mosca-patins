@@ -139,3 +139,27 @@ e passa a ser exposto no `m6_es.py`. Segue `--count-lifted`, sem custo de energi
   `w` menor).
 - Se nenhuma cumprir os critérios 1 a 3, a decisão volta ao usuário: ensinar o gesto, patim com a ponta para fora ou
   usar o que temos.
+
+## Resultado da regra de apoio (07/10/2026)
+
+No teste fixo 1, pedindo 3,5 cm/s, e pelo `m7_eval.py` (critério 4 = velocidade e quedas do M2):
+
+| Execução | 1: patins no chão (média) | 2: empurrão dividido | 3: desliza com os seis | 4: velocidade e quedas | 5: reto | Critérios |
+|---|---|---|---|---|---|---|
+| evolui_r (`w` 1,0, geração 1000) | não (68%, trás E 40%) | sim (máx. 37%; esq. 49%) | não (0%) | sim (95% ≥3 cm/s) | não (−0,32) | 2 |
+| evolui_s (`w` 2,0, geração 1000) | não (73%, trás E 39%) | sim (máx. 40%; esq. 53%) | não (2%) | não (60% ≥3 cm/s) | sim (−0,25) | 2 |
+| evolui_t (`w` 1,0, do zero, geração 500) | não (59%) | não (meio E 61%) | não (0%) | — | sim (−0,04) | 1 |
+
+- **Comparação com a geração 500 do evolui_q:**
+  - a fração de patins no chão subiu de 49% para 68–73%;
+  - o empurrão deixou de vir quase todo da pata do meio esquerda, e nenhum patim passa de 40%;
+  - o deslize com os seis continua perto de zero, e a velocidade caiu um pouco.
+- **Pela regra registrada, nenhuma variante cumpre os critérios 1 a 3, e a decisão volta ao usuário.** No empate, a
+  melhor é a evolui_r, a de `w` menor.
+- **Uma diferença que pode explicar o resultado:** todas as MLPs treinaram com o empurrão inicial que some
+  (`push_iters` 200 no `m2_train.py`: até 50% das tentativas começam já andando, e a fração cai a zero em 200
+  iterações). O `m6_es.py` nunca usou essa ajuda.
+  - Com o empurrão, a mosca começa deslizando com os seis patins no chão, e o treino descobre cedo que vale manter essa
+    postura.
+  - Partindo do repouso, o conectoma nunca visita esse estado (deslize com os seis em 0%), e o bônus correspondente nunca
+    entra.
