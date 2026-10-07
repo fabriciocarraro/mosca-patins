@@ -87,6 +87,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--phase2-gen", type=int, default=0,
                    help="geração em que entram os pedidos de parada e as curvas (antes, só retas: o deslize aparece "
                         "primeiro; depois, cedo o bastante para não perder a via direita do DNa02)")
+    p.add_argument("--push-gens", type=int, default=0,
+                   help="empurrão inicial do currículo (como no m2_train): até --push-max dos pares começa já andando, "
+                        "fração que cai a zero em tantas gerações (0 = sem empurrão); os testes partem do repouso")
+    p.add_argument("--push-max", type=float, default=0.5)
+    p.add_argument("--push-from", type=int, default=0, help="geração em que o empurrão começa (para ramificações)")
     p.add_argument("--p-stand", type=float, default=0.0,
                    help="fração dos pares que pede velocidade 0 (DNg100 sem corrente): calar o DNg100 passa a parar a mosca")
     p.add_argument("--yaw-final", type=float, default=0.0,
@@ -121,12 +126,15 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def run_episodes(env, pol, attempts, v_cmd, offsets=None, record: int | None = None, yaw: np.ndarray | None = None):
+def run_episodes(env, pol, attempts, v_cmd, offsets=None, record: int | None = None, yaw: np.ndarray | None = None,
+                 push: np.ndarray | None = None):
     """Uma leva de tentativas com a ação média; `offsets`: uma variação da mosca por ambiente; `yaw`:
-    giro pedido a cada passo (passos, lote). Com `record` (nº da geração), devolve também a captura da leva."""
+    giro pedido a cada passo (passos, lote); `push`: velocidade inicial de cada tentativa (empurrão do currículo).
+    Com `record` (nº da geração), devolve também a captura da leva."""
     pol.set_population(offsets)
-    obs, _ = env.reset(attempts, v_cmd, yaw_cmd=None if yaw is None else yaw[0])
-    recorder = None if record is None else Recorder(env, record, attempts, v_cmd, np.zeros(env.n))
+    push = np.zeros(env.n) if push is None else push
+    obs, _ = env.reset(attempts, v_cmd, push, yaw_cmd=None if yaw is None else yaw[0])
+    recorder = None if record is None else Recorder(env, record, attempts, v_cmd, push)
     r = pol.initial_state(env.n)
     v = torch.as_tensor(v_cmd, dtype=torch.float32, device=pol.device)
     t = 0
@@ -252,14 +260,21 @@ def main() -> None:
         yaw_max = state["yaw_max"] if phase2 else 0.0
         yaw_pair = yaw_schedule(rng, n // 2, env.max_steps, yaw_max, args.yaw_switch / env_cfg.control_dt)
         yaw = np.concatenate([yaw_pair, yaw_pair], axis=1) if yaw_max > 0 else None
+        k = gen - args.push_from
+        p_push = args.push_max * max(0.0, 1.0 - k / args.push_gens) if args.push_gens > 0 and k >= 0 else 0.0
+        push = None
+        if p_push > 0:  # empurrão inicial (ajuda do currículo): o par começa já andando na velocidade pedida
+            push_pair = np.where(rng.random(n // 2) < p_push, v_pair, 0.0)
+            push = np.concatenate([push_pair, push_pair])
         eps = es.sample(gen, n)
         if args.capture:  # a média desta geração; a variação de cada tentativa sai da semente (es.sample)
             (run_dir / "capture").mkdir(exist_ok=True)
             torch.save(pol.state_dict(), run_dir / "capture" / f"policy_it{gen:05d}.pt")
-            episodes, cap = run_episodes(env, pol, attempts, v_cmd, es.offsets(eps, device), record=gen, yaw=yaw)
+            episodes, cap = run_episodes(env, pol, attempts, v_cmd, es.offsets(eps, device), record=gen, yaw=yaw,
+                                         push=push)
             cap.save(run_dir / "capture" / f"it{gen:05d}.npz")
         else:
-            episodes = run_episodes(env, pol, attempts, v_cmd, es.offsets(eps, device), yaw=yaw)
+            episodes = run_episodes(env, pol, attempts, v_cmd, es.offsets(eps, device), yaw=yaw, push=push)
         ret = np.array([e["return"] for e in episodes])
         grad_norm = es.step(eps, ret)
         success = command_success(episodes, env.max_steps)  # da população perturbada (só registro)
@@ -271,7 +286,7 @@ def main() -> None:
                    "return_mean": float(ret.mean()),
                    "return_max": float(ret.max()), "speed_mean": float(sp.mean()), "speed_max": float(sp.max()),
                    "fell": float(np.mean([e["fell"] for e in episodes])), "success": success, "grad_norm": grad_norm,
-                   "time": time.perf_counter() - t0}
+                   "p_push": p_push, "time": time.perf_counter() - t0}
         if args.eval_every and (gen + 1) % args.eval_every == 0:
             speed = min(args.eval_speed, state["v_max"])
             eval_yaw = min(args.eval_yaw, yaw_max)

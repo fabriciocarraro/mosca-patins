@@ -163,3 +163,27 @@ No teste fixo 1, pedindo 3,5 cm/s, e pelo `m7_eval.py` (critério 4 = velocidade
     postura.
   - Partindo do repouso, o conectoma nunca visita esse estado (deslize com os seis em 0%), e o bônus correspondente nunca
     entra.
+
+## Empurrão inicial (registrado em 07/10/2026, antes de rodar; escolhido pelo usuário)
+
+**O que é.** `m6_es.py --push-gens N`: até `--push-max` dos pares de variações (padrão 0,5) começa a tentativa já
+andando na velocidade pedida. A fração cai linearmente a zero em N gerações, contadas a partir de `--push-from`. É a mesma
+ajuda que todas as MLPs tiveram (`push_iters` 200 no `m2_train.py`), e está no plano ("empurrão inicial... que some com o
+tempo").
+
+**O que não muda.**
+- As avaliações e os testes continuam partindo do repouso.
+- As tentativas com empurrão ficam marcadas no registro (campo `push`), não contam para marcos e recordes, e no vídeo
+  aparecem rotuladas.
+- O empurrão entra na captura. Um teste com captura e empurrão re-simulou 8 tentativas com física bit a bit e cérebro
+  com diferença 0.
+
+**Variantes**, todas com `--count-lifted --w-contact 1.0`, sem custo de energia:
+
+| Execução | Parte de | Empurrão | Duração |
+|---|---|---|---|
+| evolui_u | evolui_r, geração 1000 | `--push-gens 200 --push-from 1000` | até a geração 1400 |
+| evolui_v | do zero (anda_r5I) | `--push-gens 200` | 500 gerações |
+
+**Critérios e regra de decisão.** Os mesmos critérios 1 a 5. Segue a variante que cumprir mais critérios no fim (no
+empate, a evolui_v, que parte do zero). Se nenhuma cumprir os critérios 1 a 3, a decisão volta ao usuário.
