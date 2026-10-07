@@ -187,3 +187,26 @@ tempo").
 
 **Critérios e regra de decisão.** Os mesmos critérios 1 a 5. Segue a variante que cumprir mais critérios no fim (no
 empate, a evolui_v, que parte do zero). Se nenhuma cumprir os critérios 1 a 3, a decisão volta ao usuário.
+
+## Resultado do empurrão inicial (07/10/2026)
+
+**evolui_u (geração 1400):** cumpre 4 dos 5 critérios.
+
+| Critério | Resultado |
+|---|---|
+| 1. Patins no chão | sim (todos ≥54%, média 77%) |
+| 2. Empurrão dividido | sim (meio E 35%, trás D 23%; esquerda 56%, direita 44%) |
+| 3. Desliza com os seis | não (1–3%) |
+| 4. Velocidade e quedas | sim (100% ≥3 cm/s, 3,26 cm/s, sem quedas; o critério do M2 completo também passa) |
+| 5. Reto | sim, no limite (+0,29 rad/s) |
+
+O que falta não é patim no ar: a pata do meio esquerda empurra o tempo todo, raspando de lado (rolamento 0,37), e nunca
+rola junto com as outras. Na vista de cima, as patas da frente ficam juntas à frente da cabeça, as de trás abertas no
+chão, e a pata do meio esquerda faz uma varredura. Nenhuma pata fica no ar o tempo todo.
+
+**evolui_v (do zero, geração 425 de 500):** pedindo 3,5, não sai do lugar; pedindo 2, gira (−1,3 rad/s). Com todas as
+regras desde a geração 0, a receita não deu certo. A evolui_u chegou lá por etapas: evolui_q (`--count-lifted`,
+gerações 0–499) → evolui_r (+ apoio, 500–999) → evolui_u (+ empurrão, 1000–1399).
+
+**Pela regra registrada, nenhuma variante cumpre os critérios 1 a 3** (a evolui_u falha no 3), e a decisão volta ao
+usuário.
