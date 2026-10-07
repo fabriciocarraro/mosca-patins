@@ -72,3 +72,21 @@ chão e o deslize com os seis, com a média móvel dos parâmetros.
   do aluno, com as regras novas, verificando que a marcha se mantém. Captura desde a tentativa #1 dessa fase.
 - **Parada:** se, até a iteração 60, nenhuma variante tiver o aluno sozinho com ≥50% dos patins no chão e acima de
   1,5 cm/s pedindo 3,5, a decisão volta ao usuário.
+
+## Resultado (08/10/2026)
+
+As duas variantes rodaram as 60 iterações (~1h30 cada, sem erros). Nos 20 testes do aluno sozinho, a cada 3 iterações:
+
+| Execução | Velocidade pedindo 3,5 | Patins no chão | Desliza com os seis | Curvas (+0,5 / −0,5) | Parada | Erro de imitação (filtrado) |
+|---|---|---|---|---|---|---|
+| ensina_a (com espelhamento) | 0,03–0,21 cm/s | 44–75% | 0% | ~+0,03 / +0,03 rad/s | 95–100% | 6,6 → 0,73 |
+| ensina_b (sem espelhamento) | 0,02–0,33 cm/s | 54–80% | 0–1% | ~0 / −0,06 rad/s | 100% | 6,8 → 0,63 |
+
+- **O aluno imitou a postura, não o empurrão.** O erro de imitação caiu, mas ficou em ~0,6–0,7, ou seja, ele explica só
+  ~30–40% da variância das ações da professora. Sozinho, cai no ponto fixo parado, com a rede ativa, como no PPO de
+  patins.
+- **Regra de parada:** nenhuma variante tem o aluno sozinho acima de 1,5 cm/s pedindo 3,5. O exploratório de evolução
+  partindo do aluno não foi lançado, e a decisão volta ao usuário.
+- **Diferença em relação ao M4:** lá, a imitação da caminhada levou cinco etapas, e as primeiras usaram taxa 1e-3 e
+  ganhos por ligação 10× mais rápidos (`--syn-lr-mult 3`). Aqui, a primeira tentativa usou a receita conservadora da
+  última etapa (3e-4 e 0,3).
