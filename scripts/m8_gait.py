@@ -103,12 +103,15 @@ class Recorder:
         return out
 
 
-def run_test(path: str, speed: float, test: int, yaw: float, seconds: float, device) -> tuple[dict, dict, float, str]:
+def run_test(path: str, speed: float, test: int, yaw: float, seconds: float, device,
+             glide_friction: float = 0.0) -> tuple[dict, dict, float, str]:
     ckpt = torch.load(path, weights_only=False, map_location="cpu")
     if "ac" in ckpt:  # MLP do m2_train
         from m2_eval import load, policy
 
         env, ac, norm, state = load(path, 1, 1)
+        if glide_friction > 0:
+            env.set_glide_friction(glide_friction)
         rec = Recorder(env.model)
         env.substep_callback = rec
         obs, _ = env.reset(np.array([TEST_ATTEMPT_BASE + test]), np.array([speed]), yaw_cmd=np.array([yaw]))
@@ -119,7 +122,7 @@ def run_test(path: str, speed: float, test: int, yaw: float, seconds: float, dev
         from m6_eval import load, make_env
 
         pol, graph, ckpt, train_args = load(path, device)
-        env = make_env(ckpt, 1, 1, seconds)
+        env = make_env(ckpt, 1, 1, seconds, glide_friction)
         rec = Recorder(env.model)
         env.substep_callback = rec
         obs, _ = env.reset(np.array([TEST_ATTEMPT_BASE + test]), np.array([speed]), yaw_cmd=np.array([yaw]))
@@ -234,10 +237,13 @@ def main() -> None:
     p.add_argument("--test", type=int, default=0)
     p.add_argument("--seconds", type=float, default=0.0)
     p.add_argument("--window", type=float, nargs=2, default=(2.0, 2.4), help="janela dos gráficos de tempo (s)")
+    p.add_argument("--glide-friction", type=float, default=0.0,
+                   help="atrito ao longo dos patins no teste (1 = travados; 0 = o do modelo, patins livres)")
     p.add_argument("--device", default="cpu")
     args = p.parse_args()
     torch.set_num_threads(4)
-    a, stats, dt, kind = run_test(args.checkpoint, args.speed, args.test, args.yaw, args.seconds, torch.device(args.device))
+    a, stats, dt, kind = run_test(args.checkpoint, args.speed, args.test, args.yaw, args.seconds, torch.device(args.device),
+                                  args.glide_friction)
     summary = {"checkpoint": args.checkpoint, "tipo": kind, "teste": args.test, "pedido_cm_s": args.speed,
                "giro_pedido": args.yaw, "segundos": stats["seconds"], "caiu": bool(stats["fell"]),
                "desliza": stats["glide_frac"], "desliza_seis": stats.get("glide6_frac", float("nan")),

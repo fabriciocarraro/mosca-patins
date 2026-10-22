@@ -55,3 +55,30 @@ cada variante, pelo `m8_gait.py` e pelo `m7_eval.py`. Além disso, curvas para o
 - **Se nenhum cumprir:** a decisão volta ao usuário.
 - **As MLPs são diagnóstico:** mostram se andar e soltar os patins, com ou sem ponta para fora, leva uma rede livre a uma
   passada natural.
+
+## Desvio nas MLPs (22/10/2026, 9h50, antes do resultado dos conectomas)
+
+**O que se viu nas MLPs com patins travados (iteração 50):** as três ficaram paradas, com os seis patins no chão. A
+fase de andar de botas não aconteceu. O resultado final delas também foi fraco:
+
+- o currículo não passou de 2 cm/s;
+- a melhor, a mlp_w1, anda a 2 cm/s com 74% dos patins no chão, mas desliza com os seis só 14% do tempo;
+- as duas com ponta para fora ficaram piores.
+
+**Causa provável, um erro do desenho do teste:** a regra de apoio (`--w-contact`) paga por patim no chão, e andar exige
+levantar as patas. Com os patins travados, ficar parada com os seis no chão rende quase o mesmo que tentar andar. Além
+disso, os testes tiraram o empurrão inicial, que todas as MLPs bem-sucedidas tinham.
+
+**Conectomas na geração 100, com os patins travados:**
+
+- evolui_x (ponta 0°) também ficou parado;
+- evolui_y (ponta 35°) aprendeu a dar passos com as seis patas: patins no chão 30–76% do tempo, empurrão dividido entre
+  as seis (10–27% cada), 1,2 cm/s, mas em círculo (−1,2 rad/s).
+
+**Correção, só nas MLPs:** duas MLPs novas, sem a regra de apoio (só `--count-lifted`, como a mlp_c1) e com o empurrão
+inicial padrão. Os conectomas seguem como registrados.
+
+| Execução | Soltar os patins | Ponta para fora | Duração |
+|---|---|---|---|
+| mlp_w4 | 1,0 → 0,01 em 150 iterações | 0° | 400 iterações |
+| mlp_w5 | idem | 35° | 400 iterações |
