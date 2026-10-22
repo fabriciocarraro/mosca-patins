@@ -61,6 +61,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--v-start", type=float, default=1.0, help="cm/s")
     p.add_argument("--v-final", type=float, default=6.0, help="cm/s")
     p.add_argument("--v-step", type=float, default=0.5, help="cm/s")
+    p.add_argument("--toe-out", type=float, default=0.0, help="ângulo de montagem dos patins com a ponta para fora (graus)")
+    p.add_argument("--glide-start", type=float, default=0.0,
+                   help="atrito ao longo dos patins no começo (1 = travados, como pés; 0 = sem cronograma, o do modelo)")
+    p.add_argument("--glide-end", type=float, default=0.0, help="atrito ao longo no fim do cronograma (0 = o do modelo, 0,01)")
+    p.add_argument("--glide-gens", type=int, default=0, help="duração do cronograma (escala logarítmica)")
+    p.add_argument("--glide-from", type=int, default=0, help="geração/iteração em que o cronograma começa")
     p.add_argument("--push-iters", type=int, default=200)
     p.add_argument("--yaw-final", type=float, default=0.0,
                    help="giro máximo pedido no fim do currículo (rad/s; 0 = só retas). A faixa de giro abre "
@@ -120,6 +126,14 @@ def save(path: Path, ac, opt, norm_obs, norm_priv, state, env_cfg, args) -> None
     tmp.replace(path)
 
 
+def glide_mu(args, k: int, default: float) -> float:
+    """Atrito ao longo dos patins na geração/iteração k: cai em escala logarítmica de --glide-start até --glide-end
+    (os patins "soltam aos poucos", de travados como pés até rolando livres)."""
+    end = args.glide_end if args.glide_end > 0 else default
+    frac = min(1.0, max(0.0, (k - args.glide_from) / max(args.glide_gens, 1)))
+    return float(np.exp(np.log(args.glide_start) + frac * (np.log(end) - np.log(args.glide_start))))
+
+
 def main() -> None:
     args = parse_args()
     torch.set_num_threads(args.torch_threads)
@@ -132,7 +146,7 @@ def main() -> None:
                               count_lifted=args.count_lifted)
     env_cfg = EnvConfig(n_envs=args.envs, n_threads=args.threads, control_dt=args.control_dt,
                         episode_seconds=args.episode_seconds, action_scale=args.action_scale,
-                        action_clip=args.action_clip, seed=args.seed, reward=reward_cfg)
+                        action_clip=args.action_clip, seed=args.seed, toe_out_deg=args.toe_out, reward=reward_cfg)
     ppo_cfg = PPOConfig(target_kl=args.target_kl)
     env = SkateVecEnv(env_cfg)
     ac = ActorCritic(env.obs_dim, env.priv_dim, env.act_dim, init_std=args.init_std)
@@ -158,6 +172,8 @@ def main() -> None:
     n, horizon = env.n, env.max_steps
     print("  it   passos  retorno  dur(s) queda%  vel   rol  desliza v_max sucesso    lr  kl_fim ép  s/it")
     for it in range(state["it"], args.iters):
+        if args.glide_start > 0:  # patins que soltam aos poucos
+            env.set_glide_friction(glide_mu(args, it, env.default_glide_friction))
         t0 = time.perf_counter()
         attempts = np.arange(it * n, (it + 1) * n)
         rng = np.random.default_rng(attempt_seed(args.seed, -1 - it))
@@ -244,7 +260,7 @@ def main() -> None:
                    "yaw_max": yaw_max, "yaw_error": mean("yaw_error"), "p_push": p_push, "return": mean("return"), "seconds": mean("seconds"),
                    "fell": mean("fell"), "speed": mean("speed"), "rolling": mean("rolling"),
                    "glide_frac": mean("glide_frac"), "grounded_frac": mean("grounded_frac"), "success": success,
-                   "lr": state["lr"], "std": float(ac.log_std.detach().exp().mean()),
+                   "lr": state["lr"], "std": float(ac.log_std.detach().exp().mean()), "glide_mu": env.glide_friction,
                    "time": time.perf_counter() - t0, **stats}
         if args.eval_every and (it + 1) % args.eval_every == 0:
             eval_speed = min(args.eval_speed, state["v_max"])

@@ -31,7 +31,7 @@ from PIL import Image, ImageDraw, ImageFont
 from scipy.ndimage import gaussian_filter
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from mosca.body.skates import build_skater  # noqa: E402
+from mosca.body.skates import SkateConfig, build_skater  # noqa: E402
 from mosca.brain.graph import Connectome  # noqa: E402
 from mosca.paths import MALECNS_DIR  # noqa: E402
 
@@ -158,8 +158,8 @@ class Trace:
 
 
 class FlyView:
-    def __init__(self, width: int, distance: float, elevation: float, crop: int = 0):
-        self.model = build_skater()
+    def __init__(self, width: int, distance: float, elevation: float, crop: int = 0, toe_out_deg: float = 0.0):
+        self.model = build_skater(skates=SkateConfig(toe_out_deg=toe_out_deg))
         self.model.vis.global_.offwidth, self.model.vis.global_.offheight = max(width, 640), H
         self.data = mujoco.MjData(self.model)
         self.renderer = mujoco.Renderer(self.model, height=H, width=width)
@@ -301,8 +301,11 @@ def main() -> None:
     panel = BrainPanel(graph, MALECNS_DIR / "controller_positions.npz")
     width = FLY_W if len(traces) == 1 else W // 2
     strip = 200  # lado a lado: faixa do cérebro (o centro do painel, onde fica o cordão nervoso)
-    view = FlyView(width, args.distance, args.elevation) if len(traces) == 1 else \
-        FlyView(FLY_W, args.distance, args.elevation, crop=width - strip)
+    toe = traces[0].meta.get("toe_out_deg", 0.0)  # o modelo do desenho com o mesmo ângulo de patim da simulação
+    if len(traces) > 1 and traces[1].meta.get("toe_out_deg", 0.0) != toe:
+        sys.exit("lado a lado só com o mesmo ângulo de patim nos dois lados")
+    view = FlyView(width, args.distance, args.elevation, toe_out_deg=toe) if len(traces) == 1 else \
+        FlyView(FLY_W, args.distance, args.elevation, crop=width - strip, toe_out_deg=toe)
     fonts = font(34, True), font(20), font(16)
 
     total = max(tr.seconds for tr in traces)

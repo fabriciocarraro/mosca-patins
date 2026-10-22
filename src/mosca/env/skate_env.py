@@ -23,7 +23,7 @@ import numpy as np
 from mosca.body.fly import LEG_SEGMENTS, LEGS
 from mosca.body.ik import LEG_JOINTS, LegIK
 from mosca.body.poses import hold_pose_ctrl, set_ctrl
-from mosca.body.skates import build_skater
+from mosca.body.skates import SkateConfig, build_skater
 from mosca.body.stance import skating_stance
 
 BODY_PARTS = ("thorax", "head", "rostrum", "haustellum", "labrum", "antenna", "wing", "abdomen", "haltere")
@@ -93,6 +93,9 @@ class EnvConfig:
     # Atrito ao longo dos patins (0 = o do modelo, 0,01). Perto do de lado (1,0), os patins ficam travados e
     # se comportam como pés; o treino pode soltá-los aos poucos (set_glide_friction, gravado na captura).
     glide_friction: float = 0.0
+    # Ângulo de montagem dos patins com a ponta para fora (graus, espelhado entre os lados; 0 = paralelos ao pé). Com a
+    # lâmina em "V", o empurrão para trás de uma pata vira em parte um empurrão de lado, que é o que a lâmina transmite.
+    toe_out_deg: float = 0.0
     reward: RewardConfig = field(default_factory=RewardConfig)
 
 
@@ -131,7 +134,7 @@ def command_success(episodes: list[dict], horizon: int, yaw_tol: float | None = 
 class SkateVecEnv:
     def __init__(self, cfg: EnvConfig = EnvConfig(), model: mujoco.MjModel | None = None):
         self.cfg = cfg
-        self.model = model if model is not None else build_skater()
+        self.model = model if model is not None else build_skater(skates=SkateConfig(toe_out_deg=cfg.toe_out_deg))
         m = self.model
         self.n = cfg.n_envs
         self.substeps = round(cfg.control_dt / m.opt.timestep)

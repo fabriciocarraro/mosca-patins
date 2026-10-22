@@ -91,7 +91,7 @@ def trace_test(args, device) -> None:
     out = out_dir / f"teste{args.test + 1}_v{args.speed:g}_{tag}_g{gen}.npz"
     meta = {"mode": "teste", "run": run, "graph": Path(train_args["graph"]).name, "checkpoint": str(ckpt_path),
             "checkpoint_sha256": sha256(ckpt_path), "generation": gen, "test": args.test, "video_number": None,
-            "intervention": tag, "v_cmd": float(args.speed), "yaw": float(args.yaw), "push": 0.0, "steps": len(rates),
+            "intervention": tag, "toe_out_deg": float(env.cfg.toe_out_deg), "v_cmd": float(args.speed), "yaw": float(args.yaw), "push": 0.0, "steps": len(rates),
             "control_dt": env.cfg.control_dt, "substeps": len(poses) // max(len(rates), 1),
             "stats": {k: (float(v) if isinstance(v, (int, float, np.floating, np.integer, bool)) else v)
                       for k, v in stats.items()}}
@@ -178,7 +178,8 @@ def main() -> None:
             phys = replay(cap, i, env_cfg, on_substep=lambda env, t, sub: poses.append(env.datas[0].qpos.astype(np.float32)))
             steps = int(cap.steps[i])
             out = out_dir / f"tentativa_{a + 1}.npz"
-            meta = {"mode": "captura", "run": args.run, "graph": graph_path.name, "attempt": a, "video_number": a + 1, "generation": gen, "env": i,
+            meta = {"mode": "captura", "run": args.run, "graph": graph_path.name, "toe_out_deg": float(env_cfg.toe_out_deg),
+                    "attempt": a, "video_number": a + 1, "generation": gen, "env": i,
                     "v_cmd": float(cap.v_cmd[i]), "push": float(cap.push[i]), "steps": steps,
                     "control_dt": env_cfg.control_dt, "substeps": len(poses) // max(steps, 1),
                     "physics_max_deviation": phys["max_deviation"], "brain_max_action_diff": float(brain[i]),

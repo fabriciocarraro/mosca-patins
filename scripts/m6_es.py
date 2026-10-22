@@ -87,6 +87,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--phase2-gen", type=int, default=0,
                    help="geração em que entram os pedidos de parada e as curvas (antes, só retas: o deslize aparece "
                         "primeiro; depois, cedo o bastante para não perder a via direita do DNa02)")
+    p.add_argument("--toe-out", type=float, default=0.0, help="ângulo de montagem dos patins com a ponta para fora (graus)")
+    p.add_argument("--glide-start", type=float, default=0.0,
+                   help="atrito ao longo dos patins no começo (1 = travados, como pés; 0 = sem cronograma, o do modelo)")
+    p.add_argument("--glide-end", type=float, default=0.0, help="atrito ao longo no fim do cronograma (0 = o do modelo, 0,01)")
+    p.add_argument("--glide-gens", type=int, default=0, help="duração do cronograma (escala logarítmica)")
+    p.add_argument("--glide-from", type=int, default=0, help="geração/iteração em que o cronograma começa")
     p.add_argument("--push-gens", type=int, default=0,
                    help="empurrão inicial do currículo (como no m2_train): até --push-max dos pares começa já andando, "
                         "fração que cai a zero em tantas gerações (0 = sem empurrão); os testes partem do repouso")
@@ -153,6 +159,14 @@ def run_episodes(env, pol, attempts, v_cmd, offsets=None, record: int | None = N
     return (episodes, recorder.finish() if recorder is not None else None) if record is not None else episodes
 
 
+def glide_mu(args, k: int, default: float) -> float:
+    """Atrito ao longo dos patins na geração/iteração k: cai em escala logarítmica de --glide-start até --glide-end
+    (os patins "soltam aos poucos", de travados como pés até rolando livres)."""
+    end = args.glide_end if args.glide_end > 0 else default
+    frac = min(1.0, max(0.0, (k - args.glide_from) / max(args.glide_gens, 1)))
+    return float(np.exp(np.log(args.glide_start) + frac * (np.log(end) - np.log(args.glide_start))))
+
+
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     args = parse_args()
@@ -168,7 +182,7 @@ def main() -> None:
                               yaw_gated=args.yaw_gated, count_lifted=args.count_lifted)
     env_cfg = EnvConfig(n_envs=args.envs, n_threads=args.threads, episode_seconds=args.episode_seconds,
                         control_dt=args.control_dt, action_scale=args.action_scale, action_clip=args.action_clip,
-                        seed=args.seed, reward=reward_cfg)
+                        seed=args.seed, toe_out_deg=args.toe_out, reward=reward_cfg)
     ctrl_cfg = ControllerConfig(control_dt=args.control_dt, substeps=args.substeps, tau_scale=args.tau_scale,
                                 all_synapse_gains=True, haltere_input=True, haltere_scale=args.haltere_scale,
                                 haltere_offset=args.haltere_offset, turn_cells=tuple(args.turn_cells.split(",")),
@@ -244,6 +258,8 @@ def main() -> None:
 
     print(" ger  tentativas  ret_méd  ret_máx  vel_méd  vel_máx queda% v_max sucesso  |grad|  tempo")
     for gen in range(state["gen"], args.generations):
+        if args.glide_start > 0:  # patins que soltam aos poucos (gravado na captura de cada leva)
+            env.set_glide_friction(glide_mu(args, gen, env.default_glide_friction))
         lr_now = args.lr_warm if gen < args.lr_warm_gens and args.lr_warm > 0 else args.lr
         for group, name in zip(es.opt.param_groups, es.params):
             group["lr"] = lr_now * es.sigma[name]
@@ -286,7 +302,7 @@ def main() -> None:
                    "return_mean": float(ret.mean()),
                    "return_max": float(ret.max()), "speed_mean": float(sp.mean()), "speed_max": float(sp.max()),
                    "fell": float(np.mean([e["fell"] for e in episodes])), "success": success, "grad_norm": grad_norm,
-                   "p_push": p_push, "time": time.perf_counter() - t0}
+                   "p_push": p_push, "glide_mu": env.glide_friction, "time": time.perf_counter() - t0}
         if args.eval_every and (gen + 1) % args.eval_every == 0:
             speed = min(args.eval_speed, state["v_max"])
             eval_yaw = min(args.eval_yaw, yaw_max)
