@@ -82,3 +82,32 @@ inicial padrão. Os conectomas seguem como registrados.
 |---|---|---|---|
 | mlp_w4 | 1,0 → 0,01 em 150 iterações | 0° | 400 iterações |
 | mlp_w5 | idem | 35° | 400 iterações |
+
+## Resultado (23/10/2026)
+
+Teste fixo 1 pelo `m8_gait.py` e os 20 testes do `m7_eval.py`, com os patins livres no fim.
+
+**Fase de andar de botas (patins travados, atrito 1,0):**
+
+| Execução | O que fez |
+|---|---|
+| evolui_y (ponta 35°) | andou na geração 100: passos com as seis patas, empurrão dividido, mas em círculo |
+| mlp_w4 (corrigida, ponta 0°) | andou na iteração 50: 0,7 cm/s, as seis patas no chão 34–54% do tempo, como numa caminhada |
+| evolui_x (ponta 0°) | ficou parado |
+| mlp_w1, mlp_w2, mlp_w3 (com a regra de apoio) | ficaram paradas |
+
+**Depois de soltar os patins (geração 1000 / iteração 400), pedindo 3,5 cm/s:**
+
+| Execução | Patins no chão | Empurrão | Desliza com os seis | Velocidade | Reto | Critérios |
+|---|---|---|---|---|---|---|
+| evolui_x (ponta 0°) | 82% (meio E 32%) | 82% do lado esquerdo | 10% (no `m7_eval`: 8%) | 1,6 cm/s | sim | 1 |
+| evolui_y (ponta 35°) | 55% | meio E 50%; esquerda 68% | 0% | 2,8 cm/s | sim | 2 |
+| mlp_w4 (ponta 0°) | 64% | meio D 61%, meio E 35% | 0% | 3,8 cm/s | sim | — |
+| mlp_w5 (ponta 35°) | ~56% | meio E 80% | 0% | 2,2 cm/s pedindo 2 | não | — |
+
+- **Andar de botas acontece:** no conectoma, só com a ponta para fora; na MLP, depois de tirar a regra de apoio. Quando
+  os patins soltam, o passo vira remada com as patas do meio, que levantam para voltar, e não vira deslize com os seis
+  patins no chão.
+- **A ponta para fora** ajudou o conectoma a andar de patins travados, mas piorou a MLP e não trouxe deslize.
+- **Nenhum conectoma cumpre os critérios 1 a 3,** e a decisão volta ao usuário. O melhor conectoma continua sendo a
+  evolui_u (4 de 5, `docs/m6_regras_novas.md`).
