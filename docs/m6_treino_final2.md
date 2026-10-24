@@ -120,12 +120,58 @@ Além disso, ela precisa manter o que a evolui_u já cumpre:
   que esteja melhorando: se a diferença entre os giros para os dois lados subir de 1500 a 1700, ela pode seguir mais
   300 gerações, com registro antes.
 
-## Medidas no fim (geração 1400, ou depois da fase de curvas)
+## Resultado do exploratório de curvas (24/10/2026)
+
+O treino gravado reproduziu a evolui_q linha a linha até onde chegou nesse dia (geração 336), avaliações incluídas.
+
+**Curvas** (`m7_eval.py`: ±0,5 rad/s pedidos a 3 cm/s; o critério pede ≥ +0,25 / ≤ −0,25 rad/s e acerto ≥50%):
+
+| Execução | Geração | M2 | Giro pedindo +0,5 / −0,5 | Acerto | Parada |
+|---|---|---|---|---|---|
+| curvas_a | 1500 | OK | −0,01 / −0,01 rad/s | 0% | 100% |
+| curvas_a | 1600 | OK | +0,21 / +0,22 rad/s | 5% | 100% |
+| curvas_a | 1700 | OK | +0,05 / +0,08 rad/s | 0% | 100% |
+| curvas_b | 1500 | OK | +0,16 / +0,16 rad/s | 0% | 100% |
+| curvas_b | 1600 | OK | +0,21 / +0,26 rad/s | 0% | 100% |
+| curvas_b | 1700 | OK | +0,23 / +0,26 rad/s | 15% | 100% |
+
+**Marcha na geração 1700** (`m8_gait.py`, teste fixo 1):
+
+- **curvas_a:** patins no chão 75% (o menor, 58%); nenhum patim passa de 39% do empurrão; esquerda 45%; desliza com
+  os seis 7%; giro +0,12 rad/s. Cumpre os critérios 1, 2, 4 e 5, como a evolui_u.
+- **curvas_b:** patins no chão 77%; máximo de 43% do empurrão; esquerda 50%; desliza com os seis 5%; giro +0,30 rad/s,
+  no limite do critério 5.
+
+**DNa02 e DNa01 estimulados, na geração 1700** (efeito no giro médio contra os mesmos testes sem estímulo, em
+múltiplos da corrente de um comando de 1 rad/s):
+
+| Execução | Estímulo | 1× | 3× | 10× |
+|---|---|---|---|---|
+| curvas_a | DNa02 esquerdo / direito | +0,10 / −0,04 rad/s | −0,62 / +0,13 rad/s | −0,37 / −1,52 rad/s |
+| curvas_a | DNa01 esquerdo / direito | −0,07 / +0,10 rad/s | +0,04 / −0,33 rad/s | −0,07 / −0,33 rad/s |
+| curvas_b | DNa02 esquerdo / direito | −0,15 / −0,14 rad/s | −0,69 / −0,00 rad/s | −0,95 / −3,34 rad/s |
+| curvas_b | DNa01 esquerdo / direito | +0,03 / −0,41 rad/s | −0,28 / −0,31 rad/s | +0,16 / −0,30 rad/s |
+
+- **O sentido do giro muda com a corrente e com a marcha:** fraco para o lado estimulado, depois para o oposto, e com
+  corrente alta para a direita, qualquer que seja o lado. Calar o DNg100 continua parando a mosca nas duas variantes.
+- **Não há uma via de giro consistente que o treino possa aproveitar.** Aumentar o ganho de giro não a faria seguir o
+  comando.
+
+**Decisão, pela regra registrada:**
+
+- Nenhuma variante cumpre o critério, e a diferença entre os giros para os dois lados não subiu de 1500 a 1700
+  (curvas_a: 0,00 → −0,01 → −0,02; curvas_b: 0,00 → −0,05 → −0,03).
+- O treino gravado termina na geração 1400.
+- O vídeo diz que ela patina reto e para quando pedido, mas ainda não vira quando o comando pede. O slalom é trocado
+  pela pista reta com os 20 testes.
+- A prova do DNa02 mostra o que acontece de fato na geração 1400.
+
+## Medidas no fim (geração 1400)
 
 - **Critério do M2:** 20 testes fixos pedindo 3,5 cm/s (`m7_eval.py`).
 - **Os 5 critérios de marcha natural:** `m8_gait.py` no teste fixo 1, mais o `m7_eval.py`.
 - **Provas causais** (`m6_eval.py --probes`): o DNg100 calado para a mosca; o DNa02 de um lado a vira para esse lado.
-- **Slalom** (`m6_eval.py --slalom`), se a fase de curvas entrar.
+- **Pista reta com os 20 testes,** no lugar do slalom (a fase de curvas não entrou).
 - **Ensaio da captura (M5):** o `m5_rehearsal.py` re-simula 3 tentativas sorteadas. A física tem de sair idêntica bit a
   bit, e o cérebro com diferença <1e-4.
 - **Passos de treino:** o critério "em até 3× os passos do M2" não vale para as estratégias evolutivas, o mesmo desvio

@@ -160,3 +160,77 @@ Como a comparação do vídeo precisa usar a mesma receita do treino final, o M7
 
 Os treinos já terminados ficam como resultado da receita antiga. Com a receita nova, o M7 será registrado de novo antes
 de rodar.
+
+## Novo registro com a receita final (24/10/2026, antes de rodar)
+
+**Por quê.** O M7 foi pausado porque a receita antiga premiava patins no ar. A receita final agora é a do segundo
+treino final gravado (`docs/m6_treino_final2.md`), em três fases fixas até a geração 1400:
+
+- gerações 0–499: patins no ar contam;
+- a partir da 500: entra a regra de apoio;
+- a partir da 1000: entra o empurrão inicial.
+
+A comparação do vídeo usa essa receita.
+
+**Braços** (3 sementes cada; 1400 gerações ou iterações, 89.600 tentativas por execução, sem captura):
+
+| Braço | Parte de | Execuções |
+|---|---|---|
+| Conectoma real | `runs/anda_r5I/best_it6.pt`, o conectoma que anda (M4) | semente 0: o próprio `final2_s0`; sementes 1 e 2: `m7f_real_s1` e `m7f_real_s2` |
+| Conectoma embaralhado | `runs/anda_r5I_emb/best.pt`, a mesma linhagem de caminhada no grafo embaralhado (`controller_graph_shuffled_s0_min5.npz`) | `m7f_emb_s0`, `m7f_emb_s1` e `m7f_emb_s2` |
+| MLP (PPO, do zero) | — | `m7f_mlp_s0`, `m7f_mlp_s1` e `m7f_mlp_s2` |
+
+- **Os dois conectomas usam os argumentos do `final2_s0`.** Mudam só a semente, o ponto de partida e o grafo. As fases
+  trocam nas gerações 500 e 1000, como no treino gravado.
+- **A semente 0 do real é o próprio treino gravado.** A receita é idêntica e o treino é determinístico, então uma
+  execução separada daria os mesmos números.
+- **A MLP usa o método com que patinou no M2:** ruído correlacionado, desvio inicial 0,6 e empurrão inicial nas
+  primeiras 200 iterações. A tarefa é a mesma: `--count-lifted` desde o começo e `--w-contact 1.0` a partir da
+  iteração 500.
+
+```
+m2_train.py --run m7f_mlp_sN --seed N --iters 500 --envs 64 --threads 4 --torch-threads 2 --init-std 0.6 \
+  --v-start 2 --v-final 4 --v-step 0.5 --phase2-gen 30 --p-stand 0.3 \
+  --yaw-start 0.3 --yaw-final 1.5 --yaw-step 0.25 --yaw-filtered --yaw-gated \
+  --w-vel 1 --w-yaw 1.0 --sigma-yaw 0.5 --w-up 0.1 --w-roll 1.5 --sigma-roll 0.5 --w-slip 0.2 \
+  --w-rate 0.01 --w-leg-floor 0.1 --w-glide 0.5 --count-lifted
+# na iteração 500, retomada com --w-contact 1.0 --iters 1400 (registrada em resumes.jsonl)
+```
+
+**Diferenças declaradas:**
+
+- A MLP não passa pela etapa de andar.
+- O empurrão inicial da MLP vem no começo (iterações 0–199), como no M2. O das estratégias evolutivas entrou na geração
+  1000 só porque foi achado depois.
+- O PPO julga o currículo pelas tentativas de treino. As estratégias evolutivas o julgam pela avaliação da média.
+
+**Fora deste registro:**
+
+- **Os braços da receita curta de caminhada (`m7p_*`).** Neles o real não andou, então a comparação misturaria o andar
+  com o patinar.
+- **Os resultados da receita antiga** (`m7p_*` e `m7l_*`) ficam como histórico, e os treinos pausados não são retomados.
+- **O grafo aleatório e o BANC** continuam de fora.
+
+**Métricas e regra de leitura.** As mesmas do registro de 02/10 (`m7_eval.py` a cada 50 gerações ou iterações), com a
+primária contada até a geração 1400:
+
+1. **Primária:** primeira geração em que cumpre o critério do M2.
+2. **Curvas.**
+3. **Parada.**
+4. **Provas causais** na geração 1400, só nos conectomas.
+5. **Curvas de aprendizado.**
+6. **Nova, descritiva:** os 5 critérios de marcha natural (`m8_gait.py`, teste fixo 1) na geração 1400.
+
+A diferença só é declarada com separação completa das 3 sementes na métrica primária. Qualquer outro padrão é empate.
+
+**No Spark.** Uma fila roda no máximo 3 treinos ao mesmo tempo, contando o `final2_s0`, nesta ordem:
+
+> emb_s0, real_s1, emb_s1, real_s2, emb_s2, mlp_s0, mlp_s1, mlp_s2
+
+Cada treino tem o próprio script de vigia, como o do `final2_s0`:
+
+- escolhe a fase pela geração do checkpoint;
+- mata e retoma se o checkpoint ficar parado 15 min;
+- relança se o processo cair sem avançar.
+
+Duração prevista: ~3–4 dias.

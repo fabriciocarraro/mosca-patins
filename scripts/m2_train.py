@@ -164,6 +164,9 @@ def main() -> None:
         norm_priv.load_state_dict(ckpt["norm_priv"])
         state = ckpt["state"]
         print(f"retomando da iteração {state['it']}")
+        # Toda retomada fica registrada com os argumentos (mudanças de receita no meio de um treino registrado).
+        with open(run_dir / "resumes.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps({"it": state["it"], "args": vars(args)}) + "\n")
     else:
         (run_dir / "config.json").write_text(json.dumps(
             {"args": vars(args), "env": asdict(env_cfg), "ppo": asdict(ppo_cfg),

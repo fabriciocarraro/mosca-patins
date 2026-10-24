@@ -193,3 +193,13 @@ cada etapa está no README.
   os dois; levantar não custa nada (`w_contact` e `w_cot` desligados). O mesmo vale para a métrica "desliza" do critério
   do M2. A fração do trabalho por lado (`left_share`) conta patas balançando no ar e engana: o embaralhado também é
   assimétrico (diagonal no ar). Antes de ler números de deslize, olhe o diagrama de contato.
+
+- Curvas nos patins (24/10): na evolui_u, o DNa01 e o DNa02 de um lado viravam a mosca para o lado oposto (com o comando
+  no mesmo lado, subir o ganho de giro vira para o lado errado), e a tolerância do currículo (`--yaw-tol 0.5`) deixava
+  andar reto passar até ±0,5 rad/s. Com 3× o peso de giro e tolerância 0,25 (curvas_a), ou com o comando cruzado
+  (`--turn-cross`, curvas_b), nenhuma vira quando pedido em 300 gerações. O sentido do giro estimulado muda com a
+  corrente (1×: fraco para o lado estimulado; 3×: oposto; 10×: para a direita com qualquer lado) e com a marcha: não há
+  via de giro consistente, e o vídeo não promete curvas.
+- Reprodução (24/10): o `m6_es.py` com `--deterministic --net-dtype float64` repete o treino entre execuções e retomadas
+  (o final2_s0, com captura, reproduziu a evolui_q linha a linha), então dá para achar a receita sem captura e depois
+  gravá-la. O venv do Spark não tem matplotlib: o `m8_gait.py` grava o JSON e falha no gráfico (gere a figura no notebook).
