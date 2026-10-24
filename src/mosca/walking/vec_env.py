@@ -93,6 +93,8 @@ class WalkingVecEnv:
         self.prev_out = np.zeros((n_envs, N_OUT))
         self.ref_xy = np.zeros((n_envs, 2))
         self.ref_heading = np.zeros(n_envs)
+        # Gancho chamado depois de cada subpasso de física (re-simulação para o vídeo, um ambiente só).
+        self.substep_callback = None
 
     # --------------------------------------------------------------- reset / step
 
@@ -137,6 +139,8 @@ class WalkingVecEnv:
         """Avança 2 ms com `ctrl` (lote, nu) nos ambientes vivos; `out` é a saída do aluno (para a observação)."""
         m = self.model
         alive = np.flatnonzero(self.alive)
+        callback = self.substep_callback
+        assert callback is None or self.n == 1, "o gancho de subpasso é só para re-simulação com um ambiente"
 
         def physics(i):
             d = self.datas[i]
@@ -145,6 +149,8 @@ class WalkingVecEnv:
             for _ in range(self.substeps):
                 mujoco.mj_step(m, d)
                 acc += d.sensordata
+                if callback is not None:
+                    callback(self, i)
             self.sensor_mean[i] = acc / self.substeps
 
         list(self.pool.map(physics, alive))

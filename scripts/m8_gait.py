@@ -7,8 +7,10 @@ Re-simula um teste fixo (as sementes dos testes do M2, sem variação nem ruído
 - velocidade de cada patim ao longo da lâmina e de lado (escorregão);
 - força do chão em cada patim, e a parte dela na direção do rumo do corpo (empurrão; negativa = freio).
 
-Saídas em outputs/: <nome>_marcha.json (resumo por patim, de 1 s ao fim) e <nome>_marcha.png (diagrama de contato,
-ângulos e empurrão por patim numa janela, parcela do empurrão de cada patim e rastro dos patins visto de cima).
+Saídas em outputs/: <nome>_marcha.json (resumo por patim, de 1 s ao fim), <nome>_marcha.npz (contato e empurrão de
+cada patim a cada subpasso, para as figuras do vídeo) e <nome>_marcha.png (diagrama de contato, ângulos e empurrão
+por patim numa janela, parcela do empurrão de cada patim e rastro dos patins visto de cima; só onde houver
+matplotlib).
 
 Uso:
     python scripts/m8_gait.py runs/final_s0/checkpoints/gen02000.pt --name final_s0 --speed 3.5
@@ -251,10 +253,16 @@ def main() -> None:
     Path("outputs").mkdir(exist_ok=True)
     (Path("outputs") / f"{args.name}_marcha.json").write_text(json.dumps(summary, indent=1, ensure_ascii=False),
                                                               encoding="utf-8")
+    # Séries de contato e empurrão de cada patim, para as figuras do vídeo (m8_gait_video.py).
+    np.savez_compressed(Path("outputs") / f"{args.name}_marcha.npz", contact=a["contact"],
+                        f_fwd=a["f_fwd"].astype(np.float32), dt=dt, summary=json.dumps(summary, ensure_ascii=False))
     title = (f"{args.name} ({kind}): {summary['vel_media']:.2f} cm/s pedindo {args.speed:g}, "
              f"giro {summary['giro_medio']:+.2f} rad/s, desliza {summary['desliza']:.0%} "
              f"(com os seis no chão {summary['desliza_seis']:.0%})")
-    plot(a, dt, summary, title, Path("outputs") / f"{args.name}_marcha.png", tuple(args.window))
+    try:
+        plot(a, dt, summary, title, Path("outputs") / f"{args.name}_marcha.png", tuple(args.window))
+    except ImportError:  # o venv do Spark não tem matplotlib: a figura sai no notebook, do .npz
+        print("sem matplotlib: gráfico não gerado (o JSON e o .npz estão em outputs/)")
     print(title)
     print(f"{'patim':10s} {'no chão':>8s} {'ângulo':>8s} {'faixa':>14s} {'empurrão':>9s} {'freio/emp':>9s} "
           f"{'escorregão':>10s} {'rolamento':>9s}")

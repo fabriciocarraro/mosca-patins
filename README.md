@@ -71,6 +71,9 @@ O PyTorch entra à parte: a versão para CPU no notebook e a cu130 no Spark.
 | `python scripts/m8_neuron_positions.py` | M8: corpo celular e centro das sinapses de cada neurônio do controlador (baixa ~3 GB; rode no Spark) |
 | `python scripts/m8_trace.py --run NOME --attempts N1,N2` | M8: re-simula tentativas gravadas (física bit a bit, cérebro da leva inteira) e guarda posturas e atividade (rode onde a execução rodou) |
 | `python scripts/m8_render.py runs/NOME/video/tentativa_N.npz --slow 20` | M8: vídeo da tentativa com o painel do cérebro (MP4 pelo ffmpeg, `--gif`) |
+| `python scripts/m8_trace.py --checkpoint CKPT --tests 20 --speed 3.5` | M8: os 20 testes fixos de uma vez, para a grade da pista reta (`--walk`: o conectoma que anda, sem patins) |
+| `python scripts/m8_gait_video.py outputs/A_marcha.npz outputs/B_marcha.npz --labels "geração 100" "geração 500"` | M8: figura da marcha para o vídeo (contato e empurrão de cada patim, uma linha por geração, das saídas do `m8_gait.py`) |
+| `python scripts/m8_verify.py runs/NOME/video/*.npz` | M8: conferência de autenticidade dos clipes (registro, hashes e re-simulação bit a bit; `--brain` refaz o cérebro) |
 
 ## Estrutura
 

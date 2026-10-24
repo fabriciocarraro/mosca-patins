@@ -8,7 +8,8 @@ Quadro de 1280×720:
   sensoriais das patas, descendentes (DNg100 e DNa02 destacados) e o resto do cordão nervoso.
 
 Com `--compare`, duas tentativas ou testes lado a lado (ex.: o mesmo teste com e sem o DNg100 calado), cada uma com
-um painel pequeno do cérebro. Sai um MP4 (ffmpeg) e, com `--gif`, também um GIF.
+um painel pequeno do cérebro. Com a saída de `m8_trace.py --tests N`, a grade dos N testes fixos (uma câmera por
+mosca, sem painel), com o placar no fim. Sai um MP4 (ffmpeg) e, com `--gif`, também um GIF.
 
 Uso:
     python scripts/m8_render.py runs/final_s0/video/tentativa_1.npz --slow 20 --out outputs/tentativa_1.mp4
@@ -136,11 +137,16 @@ class Trace:
         """Postura, atividade e velocidade no instante t (a última, depois do fim da tentativa)."""
         k = min(len(self.qpos) - 1, int(round(t / self.timestep)))
         k0 = max(0, k - self.window)
-        speed = float(np.linalg.norm(self.qpos[k, :2] - self.qpos[k0, :2])) / max((k - k0) * self.timestep, 1e-9)
+        root = self.meta.get("root_qadr", 0)
+        speed = float(np.linalg.norm(self.qpos[k, root:root + 2] - self.qpos[k0, root:root + 2])) / \
+            max((k - k0) * self.timestep, 1e-9)
         return self.qpos[k], self.rates[min(len(self.rates) - 1, int(t / self.control_dt))], speed
 
     def title(self) -> tuple[str, str]:
         m = self.meta
+        if m.get("body") == "walk":
+            label = INTERVENTIONS.get(m["intervention"], m["intervention"].replace("_", " "))
+            return "Conectoma que anda", f"sem patins · {label} · teste re-simulado do checkpoint"
         if m.get("mode") == "teste":
             label = INTERVENTIONS.get(m["intervention"], m["intervention"].replace("_", " "))
             if m["intervention"] == "base" and getattr(self, "by_graph", False):
@@ -158,8 +164,14 @@ class Trace:
 
 
 class FlyView:
-    def __init__(self, width: int, distance: float, elevation: float, crop: int = 0, toe_out_deg: float = 0.0):
-        self.model = build_skater(skates=SkateConfig(toe_out_deg=toe_out_deg))
+    def __init__(self, width: int, distance: float, elevation: float, crop: int = 0, toe_out_deg: float = 0.0,
+                 body: str = "skate"):
+        if body == "walk":  # conectoma que anda (M4): o corpo de caminhada, sem patins
+            from mosca.body.fly import PhysicsConfig, build_fly_spec
+
+            self.model = build_fly_spec(PhysicsConfig()).compile()
+        else:
+            self.model = build_skater(skates=SkateConfig(toe_out_deg=toe_out_deg))
         self.model.vis.global_.offwidth, self.model.vis.global_.offheight = max(width, 640), H
         self.data = mujoco.MjData(self.model)
         self.renderer = mujoco.Renderer(self.model, height=H, width=width)
@@ -270,6 +282,83 @@ def render_rhythm(path: str, args) -> None:
         print(f"GIF: {args.gif}")
 
 
+def render_grid(path: str, args) -> None:
+    """Grade dos testes fixos (m8_trace.py --tests N): uma câmera acompanhando cada mosca, todas no mesmo instante, com
+    a velocidade e a distância de cada teste, sem escolher nenhum."""
+    z = np.load(path)
+    meta = json.loads(str(z["meta"]))
+    qpos = z["qpos"]  # (testes, quadros, nq), a cada meta["every"] subpassos
+    n = len(qpos)
+    dt = meta["control_dt"] / meta["substeps"] * meta["every"]
+    cols = 5 if n > 12 else 4
+    rows = -(-n // cols)
+    header = 64
+    tw, th = W // cols, (H - header) // rows
+    model = build_skater(skates=SkateConfig(toe_out_deg=meta.get("toe_out_deg", 0.0)))
+    model.vis.global_.offwidth, model.vis.global_.offheight = max(tw, 640), max(th, 480)
+    data = mujoco.MjData(model)
+    renderer = mujoco.Renderer(model, height=th, width=tw)
+    cam = mujoco.MjvCamera()
+    cam.type, cam.trackbodyid = mujoco.mjtCamera.mjCAMERA_TRACKING, model.body("thorax").id
+    cam.distance, cam.elevation, cam.azimuth = args.distance, args.elevation, 120
+    f_big, f_mid, f_small, f_tile = font(26, True), font(18), font(15), font(15, True)
+    window = max(1, round(0.2 / dt))
+    stats, steps = meta["stats"], meta["steps"]
+    ends = [s * meta["control_dt"] for s in steps]
+    fast = sum(not s["fell"] and s["speed"] >= 3.0 for s in stats)
+    falls = sum(bool(s["fell"]) for s in stats)
+    total = qpos.shape[1] * dt
+    end = total if args.seconds <= 0 else min(total, args.start + args.seconds)
+    times = np.arange(args.start, end, 1.0 / (args.fps * args.slow))
+    out = args.out or str(Path("outputs") / (Path(path).stem + ".mp4"))
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    ff = subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
+                           "-r", f"{args.fps:g}", "-i", "-", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", out],
+                          stdin=subprocess.PIPE)
+    for t in times:
+        k = min(qpos.shape[1] - 1, int(round(t / dt)))
+        frame = Image.new("RGB", (W, H), tuple(int(c) for c in BG))
+        d = ImageDraw.Draw(frame)
+        d.text((16, 8), args.titles[0] if args.titles else f"Os {n} testes fixos, sem escolher", font=f_big,
+               fill=(235, 235, 245))
+        d.text((16, 40), f"geração {meta['generation']} · teste, sem variação · pedido: {br(meta['v_cmd'])} cm/s em linha "
+               f"reta · t = {br(min(t, total), 2)} s · câmera lenta {args.slow:g}×", font=f_small, fill=(170, 175, 190))
+        if args.summary_always or t >= end - 0.5:  # o placar nos últimos 0,5 s simulados
+            d.text((W - 16, 12), f"{fast} de {n} com média ≥3 cm/s · quedas: {falls}", font=f_mid, fill=(255, 200, 110),
+                   anchor="ra")
+        for i in range(n):
+            data.qpos[:] = qpos[i, k]
+            mujoco.mj_forward(model, data)
+            renderer.update_scene(data, camera=cam)
+            tile = Image.fromarray(renderer.render())
+            td = ImageDraw.Draw(tile)
+            k0 = max(0, k - window)
+            speed = float(np.linalg.norm(qpos[i, k, :2] - qpos[i, k0, :2])) / max((k - k0) * dt, 1e-9)
+            dist = float(np.linalg.norm(qpos[i, k, :2] - qpos[i, 0, :2]))
+            td.text((8, 6), f"teste {i + 1}", font=f_tile, fill=(15, 15, 20))
+            if stats[i]["fell"] and t > ends[i]:
+                td.text((8, th - 24), f"caiu em {br(ends[i], 2)} s", font=f_tile, fill=(200, 30, 30))
+            else:
+                td.text((8, th - 24), f"{br(speed)} cm/s", font=f_tile, fill=(15, 15, 20))
+                td.text((tw - 8, th - 24), f"{br(dist)} cm", font=f_tile, fill=(15, 15, 20), anchor="ra")
+            r, c = divmod(i, cols)
+            frame.paste(tile, (c * tw, header + r * th))
+        for c in range(1, cols):
+            d.line([(c * tw, header), (c * tw, H)], fill=(14, 16, 22), width=2)
+        for r in range(1, rows):
+            d.line([(0, header + r * th), (W, header + r * th)], fill=(14, 16, 22), width=2)
+        ff.stdin.write(frame.tobytes())
+    ff.stdin.close()
+    ff.wait()
+    print(f"grade de {n} testes (geração {meta['generation']}, pedido {meta['v_cmd']:g} cm/s): {fast} com média ≥3 cm/s, "
+          f"{falls} quedas; {len(times)} quadros -> {out}")
+    if args.gif:
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", out, "-vf",
+                        "fps=15,scale=-1:480:flags=lanczos,split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse",
+                        args.gif], check=True)
+        print(f"GIF: {args.gif}")
+
+
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -288,9 +377,14 @@ def main() -> None:
     p.add_argument("--titles", nargs="+", default=None, help="título de cada lado (substitui o automático)")
     p.add_argument("--rate-ref", type=float, default=0.0,
                    help="taxa (Hz) de brilho cheio; padrão 60, e na cena do ritmo o percentil 90 dos picos")
+    p.add_argument("--summary-always", action="store_true", help="grade: placar o tempo todo (padrão: no fim)")
     args = p.parse_args()
-    if json.loads(str(np.load(args.trace)["meta"])).get("mode") == "ritmo":
+    mode = json.loads(str(np.load(args.trace)["meta"])).get("mode")
+    if mode == "ritmo":
         render_rhythm(args.trace, args)
+        return
+    if mode == "grade":
+        render_grid(args.trace, args)
         return
 
     traces = [Trace(args.trace)] + ([Trace(args.compare)] if args.compare else [])
@@ -302,10 +396,11 @@ def main() -> None:
     width = FLY_W if len(traces) == 1 else W // 2
     strip = 200  # lado a lado: faixa do cérebro (o centro do painel, onde fica o cordão nervoso)
     toe = traces[0].meta.get("toe_out_deg", 0.0)  # o modelo do desenho com o mesmo ângulo de patim da simulação
-    if len(traces) > 1 and traces[1].meta.get("toe_out_deg", 0.0) != toe:
-        sys.exit("lado a lado só com o mesmo ângulo de patim nos dois lados")
-    view = FlyView(width, args.distance, args.elevation, toe_out_deg=toe) if len(traces) == 1 else \
-        FlyView(FLY_W, args.distance, args.elevation, crop=width - strip, toe_out_deg=toe)
+    body = traces[0].meta.get("body", "skate")
+    if len(traces) > 1 and (traces[1].meta.get("toe_out_deg", 0.0), traces[1].meta.get("body", "skate")) != (toe, body):
+        sys.exit("lado a lado só com o mesmo corpo e o mesmo ângulo de patim nos dois lados")
+    view = FlyView(width, args.distance, args.elevation, toe_out_deg=toe, body=body) if len(traces) == 1 else \
+        FlyView(FLY_W, args.distance, args.elevation, crop=width - strip, toe_out_deg=toe, body=body)
     fonts = font(34, True), font(20), font(16)
 
     total = max(tr.seconds for tr in traces)
