@@ -21,7 +21,21 @@ registro do próprio `final2_s0` quando ele terminar.
   - `m8_curves.py`: gráficos;
   - `m8_gait.py`: diagrama de contato e empurrão de cada patim;
   - `m6_milestones.py`: escolha das tentativas.
-- **Duração-alvo:** 4 a 6 minutos.
+- **Duração-alvo: no máximo 2 minutos** (decisão do usuário, 24/10), com foco na história. O corte de trabalho está em
+  `docs/m8_corte_2min.json` (1 min 25 s; `m8_assemble.py`):
+  1. gancho com a patinadora final;
+  2. o que é esse cérebro (cartela com rótulos);
+  3. ritmo sem treino e caminhada;
+  4. tentativa #1 e a primeira queda;
+  5. a brecha do primeiro treino (patas no ar, em amarelo) e o recomeço gravado;
+  6. curva de aprendizado com o contador e as trocas de regra;
+  7. antes e depois da regra de apoio;
+  8. teste final e os 20 de 20;
+  9. DNg100 desligado e DNa02;
+  10. gancho para o conectoma embaralhado;
+  11. transparência.
+
+  As legendas servem de roteiro para a narração. As cenas abaixo são o material de onde o corte sai.
 
 ## Cenas
 

@@ -1,0 +1,33 @@
+{
+  "fps": 30,
+  "nota": "Corte de até 2 minutos com foco na história (24/10/2026). As legendas servem também de roteiro para a narração. Clipes do final2_s0 (tentativas gravadas), do primeiro treino gravado (final_s0, a brecha) e de testes da linhagem do final2_s0 (gerações 500 e 1400; conferir no final2_s0 quando ele terminar).",
+  "segments": [
+    {"clip": "outputs/v2_heroi.mp4", "start": 0, "seconds": 3.5,
+     "caption": ["Esta mosca é virtual.", "Mas os neurônios que movem as patas dela estão ligados como numa mosca de verdade."]},
+    {"clip": "outputs/v2_heroi.mp4", "start": 3.5, "seconds": 3.5, "caption": "E ela aprendeu a patinar."},
+    {"image": "outputs/v2_cerebro.png", "seconds": 8, "zoom": true},
+    {"clip": "outputs/m8_ritmo.mp4", "start": 0,
+     "caption": ["Antes de qualquer treino,", "ligar um único neurônio já faz o circuito pulsar no ritmo de andar."]},
+    {"clip": "outputs/anda_teste.mp4", "start": 1, "seconds": 3.5,
+     "caption": ["Primeiro, ela aprendeu a andar,", "imitando um modelo da caminhada de moscas reais."]},
+    {"clip": "outputs/f2_tentativa_1.mp4", "start": 0, "seconds": 2.5, "caption": ["Aí vieram os patins.", "Tentativa #1"]},
+    {"clip": "outputs/v2_queda.mp4", "start": 0, "hold": 1, "caption": "Tentativa #9: a primeira queda."},
+    {"clip": "outputs/v2_brecha.mp4", "start": 0,
+     "caption": ["No primeiro treino, ela achou uma brecha:", "patinar com patas no ar (em amarelo) dava mais pontos."]},
+    {"clip": "outputs/v2_curva.mp4", "start": 0, "seconds": 4.5,
+     "caption": ["Corrigimos a regra e recomeçamos,", "gravando cada tentativa."]},
+    {"clip": "outputs/v2_curva.mp4", "start": 4.5,
+     "caption": ["A cada rodada, 64 versões do cérebro tentam.", "As que vão melhor puxam o cérebro da rodada seguinte."]},
+    {"clip": "outputs/v2_antes_depois.mp4", "start": 0,
+     "caption": ["Mesmo assim, ela insistia numa pata no ar.", "Quando cada patim no chão passou a contar, as patas desceram."]},
+    {"clip": "outputs/v2_heroi2.mp4", "start": 0, "caption": "Depois de 89.600 tentativas:"},
+    {"clip": "outputs/v2_grade.mp4", "start": 0, "hold": 2,
+     "caption": ["20 de 20 testes acima de 3 cm/s, sem escolher.", "Em tamanho de gente, seria uns 70 km/h."]},
+    {"clip": "outputs/v2_dng100.mp4", "start": 0,
+     "caption": ["Desligue só dois neurônios, o par DNg100…", "…e ela para."]},
+    {"clip": "outputs/v2_dna02.mp4", "start": 0,
+     "caption": ["O neurônio de virar ainda a vira, mas para o lado errado.", "Fazer curvas quando pedido é o próximo desafio."]},
+    {"card": ["E se as ligações fossem sorteadas?", "O mesmo treino com o conectoma embaralhado já está rodando."], "seconds": 4},
+    {"card": ["Nenhuma cena encenada", "cada clipe foi re-simulado a partir do que foi gravado", "patins idealizados · cérebro ajustado por computador · detalhes e código na descrição"], "seconds": 4.5}
+  ]
+}

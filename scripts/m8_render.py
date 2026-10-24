@@ -142,6 +142,17 @@ class Trace:
             max((k - k0) * self.timestep, 1e-9)
         return self.qpos[k], self.rates[min(len(self.rates) - 1, int(t / self.control_dt))], speed
 
+    def headings(self, smooth: float = 0.4) -> np.ndarray:
+        """Rumo do tórax a cada subpasso (rad), suavizado por média móvel centrada de `smooth` s (para a câmera que
+        acompanha o rumo não tremer com o balanço da passada)."""
+        root = self.meta.get("root_qadr", 0)
+        w, x, y, z = (self.qpos[:, root + 3 + i].astype(np.float64) for i in range(4))
+        h = np.unwrap(np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
+        n = max(1, int(round(smooth / self.timestep)))
+        pad = np.concatenate([np.full(n, h[0]), h, np.full(n, h[-1])])
+        kernel = np.ones(2 * n + 1) / (2 * n + 1)
+        return np.convolve(pad, kernel, "valid")
+
     def title(self) -> tuple[str, str]:
         m = self.meta
         if m.get("body") == "walk":
@@ -182,10 +193,42 @@ class FlyView:
         self.width = self.crop
         self.full_width = width
         self.px_per_cm = ruler_pixels(self.model, distance, H)
+        self.air = False
+        self.boots, self.runner_leg = [], {}
+        if body != "walk":  # patins no ar em amarelo (--air): as botas perdem o material e ganham cor por quadro
+            from mosca.body.fly import LEGS
 
-    def render(self, qpos: np.ndarray, title: str, subtitle: str, lines: list[str], fonts) -> Image.Image:
+            m = self.model
+            self.boots = [m.geom(f"skate_boot_{leg}").id for leg in LEGS]
+            for k, leg in enumerate(LEGS):
+                for tag in ("lf", "lb", "rf", "rb"):
+                    try:
+                        self.runner_leg[m.geom(f"skate_runner_{tag}_{leg}").id] = k
+                    except KeyError:
+                        pass
+            self.floor = m.geom("floor").id
+
+    def color_air(self) -> None:
+        """Bota vermelha com o patim no chão, amarela com ele no ar (contatos do próprio quadro)."""
+        d, m = self.data, self.model
+        grounded = np.zeros(len(self.boots), bool)
+        for i in range(d.ncon):
+            g1, g2 = d.contact[i].geom1, d.contact[i].geom2
+            other = g2 if g1 == self.floor else g1 if g2 == self.floor else -1
+            if other in self.runner_leg:
+                grounded[self.runner_leg[other]] = True
+        for k, g in enumerate(self.boots):
+            m.geom_matid[g] = -1
+            m.geom_rgba[g] = (0.85, 0.12, 0.16, 1.0) if grounded[k] else (1.0, 0.82, 0.05, 1.0)
+
+    def render(self, qpos: np.ndarray, title: str, subtitle: str, lines: list[str], fonts,
+               azimuth: float | None = None) -> Image.Image:
         self.data.qpos[:] = qpos
         mujoco.mj_forward(self.model, self.data)
+        if self.air:
+            self.color_air()
+        if azimuth is not None:
+            self.cam.azimuth = azimuth
         self.renderer.update_scene(self.data, camera=self.cam)
         img = Image.fromarray(self.renderer.render())
         if self.crop < self.full_width:
@@ -340,7 +383,7 @@ def render_grid(path: str, args) -> None:
     cols = 5 if n > 12 else 4
     rows = -(-n // cols)
     header = 64
-    tw, th = W // cols, (H - header) // rows
+    tw, th = W // cols, (H - header - args.grid_bottom) // rows
     model = build_skater(skates=SkateConfig(toe_out_deg=meta.get("toe_out_deg", 0.0)))
     model.vis.global_.offwidth, model.vis.global_.offheight = max(tw, 640), max(th, 480)
     data = mujoco.MjData(model)
@@ -425,6 +468,10 @@ def main() -> None:
     p.add_argument("--rate-ref", type=float, default=0.0,
                    help="taxa (Hz) de brilho cheio; padrão 60, e na cena do ritmo o percentil 90 dos picos")
     p.add_argument("--summary-always", action="store_true", help="grade: placar o tempo todo (padrão: no fim)")
+    p.add_argument("--grid-bottom", type=int, default=0, help="grade: margem livre embaixo (px), para a legenda do corte")
+    p.add_argument("--follow", type=float, default=None,
+                   help="câmera que acompanha o rumo da mosca: azimute relativo ao rumo (graus; 90 = de lado)")
+    p.add_argument("--air", action="store_true", help="patins no ar em amarelo (bota vermelha com o patim no chão)")
     p.add_argument("--trail", action="store_true", help="mapa pequeno visto de cima com o rastro do tórax")
     p.add_argument("--trail-ref", default="", help="traço de referência no mapa, em cinza (ex.: o teste sem intervenção)")
     args = p.parse_args()
@@ -453,6 +500,8 @@ def main() -> None:
     fonts = font(34, True), font(20), font(16)
     trail = Trail(traces, Trace(args.trail_ref) if args.trail_ref else None) if args.trail else None
     trail_colors = [(220, 60, 110), (40, 120, 220)]
+    view.air = args.air
+    heads = [tr.headings() for tr in traces] if args.follow is not None else None
 
     total = max(tr.seconds for tr in traces)
     end = total if args.seconds <= 0 else min(total, args.start + args.seconds)
@@ -473,7 +522,11 @@ def main() -> None:
                 subtitle += f" · {args.label}"
             lines = [f"t = {br(min(t, tr.seconds), 3)} s   ·   câmera lenta {args.slow:g}×",
                      f"{br(speed)} cm/s (pedido: {br(tr.meta['v_cmd'])})"]
-            fly = view.render(qpos, title, subtitle, lines, fonts)
+            az = None
+            if heads is not None:
+                k = min(len(tr.qpos) - 1, int(round(t / tr.timestep)))
+                az = float(np.degrees(heads[col][k])) + args.follow
+            fly = view.render(qpos, title, subtitle, lines, fonts, azimuth=az)
             if trail is not None:
                 trail.draw(fly, col, min(len(tr.qpos) - 1, int(round(t / tr.timestep))), trail_colors[col], fonts)
             frame.paste(fly, (col * width, 0))
