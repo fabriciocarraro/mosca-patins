@@ -1,0 +1,278 @@
+{
+  "nota": "Edição da narração gravada pelo Fabrício (24/10/2026, Gravador do Google, 3 min 01 s, uma tomada só) para o corte v3. Ilhas = trechos de fala entre pausas (silencedetect -36 dB, 0,22 s), transcritos um a um pelo whisper large-v3. 'text' é o que ele disse em cada cena (vira a legenda); 'removidas' lista o que ficou de fora e por quê.",
+  "gravacao": "outputs/narracao/gravacao_original/narracao_fabricio.m4a (não versionada)",
+  "scenes": [
+    {
+      "scene": 0,
+      "keep": [
+        0
+      ],
+      "text": "Essa mosca é virtual, mas os neurônios das patas dela são ligados igualzinho aos de uma mosca de verdade."
+    },
+    {
+      "scene": 1,
+      "keep": [
+        1
+      ],
+      "text": "E ela aprendeu a patinar."
+    },
+    {
+      "scene": 2,
+      "keep": [
+        2
+      ],
+      "text": "No começo foi assim: a tentativa #1, e ela nem saía do lugar."
+    },
+    {
+      "scene": 3,
+      "keep": [
+        3
+      ],
+      "text": "Os patins funcionam como lâminas que só deslizam pra frente."
+    },
+    {
+      "scene": 4,
+      "keep": [
+        5
+      ],
+      "text": "E aí, na tentativa #9, veio o primeiro tombo."
+    },
+    {
+      "scene": 5,
+      "keep": [
+        6,
+        8,
+        9,
+        10,
+        11,
+        12
+      ],
+      "text": "Por dentro tá rodando o cordão nervoso de uma mosca real, como se fosse uma medula espinhal. Tem 23 mil neurônios mapeados um por um, realmente, e as ligações são as dela, da mosca. O treino aqui só mexe na força de cada uma dessas ligações."
+    },
+    {
+      "scene": 6,
+      "keep": [
+        [
+          13,
+          47.95,
+          null
+        ],
+        14
+      ],
+      "text": "Sem treino nenhum, só ligar o neurônio já faz o circuito das patas pulsar no ritmo de andar de uma mosca."
+    },
+    {
+      "scene": 7,
+      "keep": [
+        15
+      ],
+      "text": "Então, primeiro ela aprendeu a andar."
+    },
+    {
+      "scene": 8,
+      "keep": [
+        17,
+        18,
+        19
+      ],
+      "text": "E aí, nos patins, ela aprende por tentativa e erro, ganhando pontos por ir na velocidade pedida e também por deslizar."
+    },
+    {
+      "scene": 9,
+      "keep": [
+        20,
+        21,
+        22,
+        23,
+        24
+      ],
+      "text": "Só que, no primeiro treino, ela achou uma brecha: patinar com as patas no ar, essas aí em amarelo, dava mais pontos pra ela. Bem espertinha, né?"
+    },
+    {
+      "scene": 10,
+      "keep": [
+        25,
+        26
+      ],
+      "text": "Daí eu corrigi essa regra e ela recomeçou do zero, gravando cada uma das tentativas."
+    },
+    {
+      "scene": 11,
+      "keep": [
+        30,
+        31,
+        32,
+        34,
+        35
+      ],
+      "text": "Mesmo assim, ela insistia nisso aí de ter uma pata no ar, até que cada patim no chão começou a valer ponto. E também eu dei um empurrãozinho no começo pra ela. E aí as patas desceram."
+    },
+    {
+      "scene": 12,
+      "keep": [
+        36,
+        39,
+        40
+      ],
+      "text": "No final, depois de 89.600 tentativas, olha ela aí, patinando a mais de 3 cm/s. No tamanho de uma pessoa, seria equivalente a 70 km/h."
+    },
+    {
+      "scene": 13,
+      "keep": [
+        42
+      ],
+      "text": "E não foi sorte: teve 20 de 20 testes, sem escolher nenhum."
+    },
+    {
+      "scene": 14,
+      "keep": [
+        44,
+        45,
+        46
+      ],
+      "text": "E quer a prova que quem manda é o cérebro dela mesmo? Dá pra desligar os dois neurônios de andar, e ela para na hora."
+    },
+    {
+      "scene": 15,
+      "keep": [
+        50,
+        51
+      ],
+      "text": "Já o neurônio de virar tá virando a mosca pro lado errado. Então fazer a curva é o próximo desafio aqui."
+    },
+    {
+      "scene": 16,
+      "keep": [
+        [
+          57,
+          170.74,
+          null
+        ],
+        58,
+        59
+      ],
+      "text": "E se as ligações fossem sorteadas? Esse treino tá rodando. Será que ela vai patinar igual?"
+    },
+    {
+      "scene": 17,
+      "keep": [
+        60,
+        61
+      ],
+      "text": "Tudo aqui simulado, nada foi encenado. Eu deixo os detalhes na descrição."
+    }
+  ],
+  "removidas": [
+    {
+      "ilha": 4,
+      "texto": "(ruído curto)",
+      "motivo": "sem fala"
+    },
+    {
+      "ilha": 7,
+      "texto": "Que é como o sistema nervoso dela.",
+      "motivo": "repete o “cordão nervoso”; cortada por tempo"
+    },
+    {
+      "ilha": 13,
+      "texto": "Primeiro,",
+      "motivo": "palavra do começo (repete o “primeiro” da cena seguinte); corte na micropausa de 47,9 s"
+    },
+    {
+      "ilha": 16,
+      "texto": "Nos patins ela aprende, por tentativa,",
+      "motivo": "recomeço (refeita na ilha 17)"
+    },
+    {
+      "ilha": 27,
+      "texto": "E aí, a cada rodada,",
+      "motivo": "cortada por tempo (2 minutos)"
+    },
+    {
+      "ilha": 28,
+      "texto": "Sessenta e quatro versões do cérebro dela vão tentando",
+      "motivo": "cortada por tempo (a ideia já está na cena 8)"
+    },
+    {
+      "ilha": 29,
+      "texto": "E as melhores vão para a próxima fase.",
+      "motivo": "cortada por tempo"
+    },
+    {
+      "ilha": 33,
+      "texto": "E também,",
+      "motivo": "recomeço (refeita na ilha 34)"
+    },
+    {
+      "ilha": 37,
+      "texto": "Olha ela aí.",
+      "motivo": "recomeço (refeita no começo da ilha 39)"
+    },
+    {
+      "ilha": 38,
+      "texto": "Patin…",
+      "motivo": "recomeço"
+    },
+    {
+      "ilha": 41,
+      "texto": "E não foi sorte, né?",
+      "motivo": "recomeço (refeita na ilha 42)"
+    },
+    {
+      "ilha": 43,
+      "texto": "(ruído curto)",
+      "motivo": "sem fala"
+    },
+    {
+      "ilha": 47,
+      "texto": "Já o neurônio de virar",
+      "motivo": "primeira tomada (refeita nas ilhas 50 e 51)"
+    },
+    {
+      "ilha": 48,
+      "texto": "Realmente vira a mosca para o lado errado.",
+      "motivo": "primeira tomada"
+    },
+    {
+      "ilha": 49,
+      "texto": "E fazer a curva é o próximo desafio.",
+      "motivo": "primeira tomada"
+    },
+    {
+      "ilha": 52,
+      "texto": "Também",
+      "motivo": "recomeço"
+    },
+    {
+      "ilha": 53,
+      "texto": "Se a gente só sorteasse essas ligações,",
+      "motivo": "recomeço"
+    },
+    {
+      "ilha": 54,
+      "texto": "É…",
+      "motivo": "hesitação"
+    },
+    {
+      "ilha": 55,
+      "texto": "A gente vai ver",
+      "motivo": "recomeço"
+    },
+    {
+      "ilha": 56,
+      "texto": "Também,",
+      "motivo": "recomeço (refeita na ilha 57)"
+    },
+    {
+      "ilha": 57,
+      "texto": "Também,",
+      "motivo": "palavra do começo; corte na micropausa de 170,7 s"
+    }
+  ],
+  "parametros": {
+    "pad": 0.05,
+    "max_pause": 0.32,
+    "cut_pause": 0.25,
+    "tempo": 1.09
+  }
+}

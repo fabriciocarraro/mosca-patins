@@ -4,9 +4,9 @@ narração, legendas e trilha.
 
 Cada segmento aceita:
 - "card": [título, linhas…] (cartela) | "clip": caminho (com "start" e "seconds") | "image": caminho;
-- "seconds": duração mínima (cartela, imagem ou trecho do clipe);
-- "narration": texto falado (áudio do m8_narrate.py). A cena dura o bastante pra fala caber; se o clipe acabar antes,
-  o último quadro fica congelado. As legendas saem desse texto (ou de "subtitle", se o escrito for diferente do
+- "seconds": duração mínima da cena (num clipe que precisa terminar, como uma queda no último quadro, a duração dele);
+- "narration": texto falado (áudio do m8_narrate.py). A cena dura o bastante pra fala caber, e o clipe é cortado nessa
+  duração; se acabar antes, o último quadro fica congelado. As legendas saem desse texto (ou de "subtitle", se o escrito for diferente do
   falado), em blocos de até duas linhas, no tempo proporcional ao tamanho de cada bloco;
 - "caption": legenda fixa (texto ou [texto, linha menor]), pra cortes sem narração;
 - "label": texto grande no alto (um número de impacto), a partir de "label_at" segundos da cena;
@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from m8_render import BG, H, W, font  # noqa: E402
 
 ENCODE = ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-r"]
-LEAD, TAIL = 0.12, 0.35  # respiro antes e depois de cada fala (s)
+LEAD, TAIL = 0.06, 0.18  # respiro antes e depois de cada fala (s)
 
 
 def run(cmd: list[str]) -> None:
@@ -151,7 +151,7 @@ def segment(seg: dict, k: int, tmp: Path, fps: float, dur: float, speech: float)
     else:
         start = seg.get("start", 0)
         avail = duration(Path(seg["clip"])) - start
-        take = min(avail, seg.get("seconds") or avail)
+        take = min(avail, dur)  # o clipe vai até onde a cena precisa; se acabar antes, o último quadro fica
         inputs += ["-ss", f"{start:g}", "-t", f"{take:.3f}", "-i", seg["clip"]]
         base = f"[0:v]scale={W}:{H},setsar=1,fps={fps:g}"
         hold = max(seg.get("hold", 0.0), dur - take)
@@ -199,9 +199,9 @@ def main() -> None:
     ndir = Path(plan["narration_dir"]) if plan.get("narration_dir") else None
     speech = {int(k): v for k, v in json.loads((ndir / "duracoes.json").read_text()).items()} if ndir else {}
     durs = []
-    for k, seg in enumerate(plan["segments"]):  # duração de cada cena: a pedida, ou o bastante pra fala caber
+    for k, seg in enumerate(plan["segments"]):  # duração de cada cena: a mínima pedida, ou o bastante pra fala caber
         want = seg.get("seconds")
-        if want is None and "clip" in seg:
+        if want is None and "clip" in seg and k not in speech:  # clipe sem fala e sem duração: inteiro
             want = duration(Path(seg["clip"])) - seg.get("start", 0)
         want = (want or 0) + seg.get("hold", 0)
         durs.append(max(want, speech[k] + LEAD + TAIL) if k in speech else want)

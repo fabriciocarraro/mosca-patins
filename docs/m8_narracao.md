@@ -1,5 +1,15 @@
 # M8: roteiro da narração do corte v3 (24/10/2026)
 
+**Narração final:** a gravação do Fabrício (24/10, uma tomada só, 3 min 01 s), cortada por cena. O mapa de edição está em
+`docs/m8_narracao_edicao.json` e é aplicado pelo `scripts/m8_cut_narration.py`:
+
+- **O que ficou:** as ilhas de fala mantidas em cada cena, com o texto que ele disse (é a legenda);
+- **O que saiu, e por quê:** os erros, os recomeços, "Que é como o sistema nervoso dela" e "E aí, a cada rodada, 64
+  versões do cérebro dela…", cortados para caber em 2 minutos;
+- **Velocidade:** a fala ficou 9% mais rápida, sem mudar o tom.
+
+A tabela abaixo é o roteiro proposto antes da gravação.
+
 Uma fala por cena do corte `docs/m8_corte_v3.json`. As legendas saem do texto, e a montagem estica cada cena até a
 fala caber, então dá pra falar no seu ritmo. Mas, pra caber nos 2 minutos, a soma das falas deve ficar em até ~1 min
 45 s. O tempo de referência é o da voz provisória.

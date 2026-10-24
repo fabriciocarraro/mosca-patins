@@ -1,120 +1,133 @@
 {
   "fps": 30,
-  "nota": "Versão 3 (24/10/2026): até 2 minutos, com narração, legendas e trilha. O texto falado está em 'narration' (as legendas saem dele, ou de 'subtitle' quando o escrito é diferente do falado). Clipes do final2_s0 (tentativas gravadas), do primeiro treino gravado (final_s0, a brecha) e de testes da linhagem do final2_s0 (gerações 500 e 1400; conferir no final2_s0 quando ele terminar).",
-  "narration_dir": "outputs/narracao/sapi",
+  "nota": "Versão 3 (24/10/2026): até 2 minutos, com narração, legendas e trilha. A narração é a gravação do Fabrício (24/10), cortada por cena (docs/m8_narracao_edicao.json); 'subtitle' é o que ele disse, e 'narration' guarda o texto do roteiro (as legendas saem dele, ou de 'subtitle' quando o escrito é diferente do falado). Clipes do final2_s0 (tentativas gravadas), do primeiro treino gravado (final_s0, a brecha) e de testes da linhagem do final2_s0 (gerações 500 e 1400; conferir no final2_s0 quando ele terminar).",
+  "narration_dir": "outputs/narracao/files",
   "music_lufs": -24,
   "segments": [
     {
       "clip": "outputs/v3_heroi_real.mp4",
-      "start": 0.5,
-      "seconds": 3.5,
+      "start": 0,
       "music": "intro",
-      "narration": "Essa mosca é virtual, mas os neurônios das patas dela são ligados igualzinho aos de uma mosca de verdade."
+      "narration": "Essa mosca é virtual, mas os neurônios das patas dela são ligados igualzinho aos de uma mosca de verdade.",
+      "subtitle": "Essa mosca é virtual, mas os neurônios das patas dela são ligados igualzinho aos de uma mosca de verdade."
     },
     {
       "clip": "outputs/v2_heroi.mp4",
       "start": 1.0,
-      "seconds": 2.5,
-      "narration": "E ela aprendeu a patinar."
+      "seconds": 1.5,
+      "narration": "E ela aprendeu a patinar.",
+      "subtitle": "E ela aprendeu a patinar."
     },
     {
       "clip": "outputs/f2_tentativa_1.mp4",
       "start": 0,
-      "seconds": 2.5,
       "music": "setup",
       "narration": "No começo foi assim: tentativa número um, e ela nem sai do lugar.",
-      "subtitle": "No começo foi assim: tentativa #1, e ela nem sai do lugar."
+      "subtitle": "No começo foi assim: a tentativa #1, e ela nem saía do lugar."
     },
     {
       "clip": "outputs/v3_patim.mp4",
       "start": 0,
-      "narration": "Os patins são lâminas que só deslizam pra frente…"
+      "narration": "Os patins são lâminas que só deslizam pra frente…",
+      "subtitle": "Os patins funcionam como lâminas que só deslizam pra frente."
     },
     {
       "clip": "outputs/v2_queda.mp4",
-      "start": 0,
-      "hold": 0.6,
+      "start": 0.8,
+      "hold": 0.3,
       "narration": "e na tentativa nove veio o primeiro tombo.",
-      "subtitle": "…e na tentativa #9 veio o primeiro tombo."
+      "subtitle": "E aí, na tentativa #9, veio o primeiro tombo.",
+      "seconds": 3.23
     },
     {
-      "image": "outputs/v3_cerebro.png",
-      "seconds": 6,
-      "zoom": true,
-      "narration": "Por dentro, roda o cordão nervoso de uma mosca real, tipo a medula espinhal dela: 23 mil neurônios, mapeados um por um. As ligações são as dela; o treino só mexe na força de cada uma."
+      "narration": "Por dentro, roda o cordão nervoso de uma mosca real, tipo a medula espinhal dela: 23 mil neurônios, mapeados um por um. As ligações são as dela; o treino só mexe na força de cada uma.",
+      "subtitle": "Por dentro tá rodando o cordão nervoso de uma mosca real, como se fosse uma medula espinhal. Tem 23 mil neurônios mapeados um por um, realmente, e as ligações são as dela, da mosca. O treino aqui só mexe na força de cada uma dessas ligações.",
+      "clip": "outputs/v3_cerebro_combo.mp4",
+      "start": 0
     },
     {
       "clip": "outputs/v3_ritmo.mp4",
       "start": 0,
-      "narration": "Sem treino nenhum, ligar um neurônio só já faz o circuito das patas pulsar no ritmo de andar."
+      "narration": "Sem treino nenhum, ligar um neurônio só já faz o circuito das patas pulsar no ritmo de andar.",
+      "subtitle": "Sem treino nenhum, só ligar o neurônio já faz o circuito das patas pulsar no ritmo de andar de uma mosca."
     },
     {
       "clip": "outputs/anda_teste.mp4",
       "start": 0.5,
-      "seconds": 2.5,
-      "narration": "Primeiro, ela aprendeu a andar."
+      "seconds": 1.8,
+      "narration": "Primeiro, ela aprendeu a andar.",
+      "subtitle": "Então, primeiro ela aprendeu a andar."
     },
     {
       "clip": "outputs/v3_montagem.mp4",
       "start": 0,
-      "narration": "Nos patins, ela aprende na tentativa e erro, ganhando pontos por ir na velocidade pedida e por deslizar."
+      "narration": "Nos patins, ela aprende na tentativa e erro, ganhando pontos por ir na velocidade pedida e por deslizar.",
+      "subtitle": "E aí, nos patins, ela aprende por tentativa e erro, ganhando pontos por ir na velocidade pedida e também por deslizar."
     },
     {
       "clip": "outputs/v2_brecha.mp4",
       "start": 0,
       "music": "tension",
-      "narration": "Só que, no primeiro treino, ela achou uma brecha: patinar com as patas no ar, essas em amarelo, dava mais pontos. Espertinha, né?"
+      "narration": "Só que, no primeiro treino, ela achou uma brecha: patinar com as patas no ar, essas em amarelo, dava mais pontos. Espertinha, né?",
+      "subtitle": "Só que, no primeiro treino, ela achou uma brecha: patinar com as patas no ar, essas aí em amarelo, dava mais pontos pra ela. Bem espertinha, né?"
     },
     {
       "clip": "outputs/v3_curva_chao.mp4",
       "start": 0,
       "music": "build",
-      "narration": "Daí a gente corrigiu a regra e recomeçou do zero, gravando cada tentativa. A cada rodada, 64 versões do cérebro tentam, e as melhores puxam a próxima."
+      "narration": "Daí a gente corrigiu a regra e recomeçou do zero, gravando cada tentativa. A cada rodada, 64 versões do cérebro tentam, e as melhores puxam a próxima.",
+      "subtitle": "Daí eu corrigi essa regra e ela recomeçou do zero, gravando cada uma das tentativas.",
+      "seconds": 5.6
     },
     {
       "clip": "outputs/v3_antes_depois.mp4",
       "start": 0,
-      "narration": "Mesmo assim, ela insistia numa pata no ar, até que cada patim no chão passou a valer ponto, e rolou um empurrãozinho no começo. Aí as patas desceram."
+      "narration": "Mesmo assim, ela insistia numa pata no ar, até que cada patim no chão passou a valer ponto, e rolou um empurrãozinho no começo. Aí as patas desceram.",
+      "subtitle": "Mesmo assim, ela insistia nisso aí de ter uma pata no ar, até que cada patim no chão começou a valer ponto. E também eu dei um empurrãozinho no começo pra ela. E aí as patas desceram."
     },
     {
       "clip": "outputs/v3_climax.mp4",
       "start": 0,
       "music": "climax",
       "label": "≈ 70 km/h em tamanho de gente",
-      "label_at": 5.5,
+      "label_at": 9.0,
       "narration": "Depois de oitenta e nove mil e seiscentas tentativas, olha ela aí, a mais de três centímetros por segundo. Em tamanho de gente, isso dá uns setenta quilômetros por hora!",
-      "subtitle": "Depois de 89.600 tentativas, olha ela aí, a mais de 3 cm/s. Em tamanho de gente, isso dá uns 70 km/h!"
+      "subtitle": "No final, depois de 89.600 tentativas, olha ela aí, patinando a mais de 3 cm/s. No tamanho de uma pessoa, seria equivalente a 70 km/h."
     },
     {
       "clip": "outputs/v2_grade.mp4",
       "start": 0,
-      "hold": 1.0,
+      "hold": 0.4,
       "narration": "E não foi sorte: vinte de vinte testes, sem escolher nenhum.",
-      "subtitle": "E não foi sorte: 20 de 20 testes, sem escolher nenhum."
+      "subtitle": "E não foi sorte: teve 20 de 20 testes, sem escolher nenhum.",
+      "seconds": 4.0
     },
     {
       "clip": "outputs/v3_dng100.mp4",
       "start": 0,
       "music": "proofs",
-      "narration": "Quer a prova de que quem manda é o cérebro dela? Desliga os dois neurônios de “ande”… e ela para na hora."
+      "narration": "Quer a prova de que quem manda é o cérebro dela? Desliga os dois neurônios de “ande”… e ela para na hora.",
+      "subtitle": "E quer a prova que quem manda é o cérebro dela mesmo? Dá pra desligar os dois neurônios de andar, e ela para na hora."
     },
     {
       "clip": "outputs/v3_dna02.mp4",
       "start": 0,
-      "narration": "Já o neurônio de “vire” vira a mosca pro lado errado. Fazer curva é o próximo desafio."
+      "narration": "Já o neurônio de “vire” vira a mosca pro lado errado. Fazer curva é o próximo desafio.",
+      "subtitle": "Já o neurônio de virar tá virando a mosca pro lado errado. Então fazer a curva é o próximo desafio aqui."
     },
     {
       "image": "outputs/v3_cerebro.png",
-      "seconds": 4,
+      "seconds": 3,
       "zoom": true,
       "music": "outro",
-      "narration": "E se as ligações fossem sorteadas? Esse treino já tá rodando… será que ela patina igual?"
+      "narration": "E se as ligações fossem sorteadas? Esse treino já tá rodando… será que ela patina igual?",
+      "subtitle": "E se as ligações fossem sorteadas? Esse treino tá rodando. Será que ela vai patinar igual?"
     },
     {
       "clip": "outputs/v2_heroi.mp4",
       "start": 3.0,
-      "seconds": 3.5,
-      "narration": "Tudo simulado, nada encenado. Detalhes na descrição!"
+      "narration": "Tudo simulado, nada encenado. Detalhes na descrição!",
+      "subtitle": "Tudo aqui simulado, nada foi encenado. Eu deixo os detalhes na descrição."
     }
   ]
 }
