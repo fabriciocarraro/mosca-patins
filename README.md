@@ -74,7 +74,9 @@ O PyTorch entra à parte: a versão para CPU no notebook e a cu130 no Spark.
 | `python scripts/m8_trace.py --checkpoint CKPT --tests 20 --speed 3.5` | M8: os 20 testes fixos de uma vez, para a grade da pista reta (`--walk`: o conectoma que anda, sem patins) |
 | `python scripts/m8_gait_video.py outputs/A_marcha.npz outputs/B_marcha.npz --labels "geração 100" "geração 500"` | M8: figura da marcha para o vídeo (contato e empurrão de cada patim, uma linha por geração, das saídas do `m8_gait.py`) |
 | `python scripts/m8_verify.py runs/NOME/video/*.npz` | M8: conferência de autenticidade dos clipes (registro, hashes e re-simulação bit a bit; `--brain` refaz o cérebro) |
-| `python scripts/m8_assemble.py docs/m8_corte_2min.json --out outputs/corte_2min.mp4` | M8: corte a partir de um plano em JSON (cartelas, clipes com legenda, quadro congelado, imagens com zoom) |
+| `python scripts/m8_narrate.py docs/m8_corte_v3.json --engine sapi` | M8: narração do corte, um áudio por cena (vozes do Windows pra cronometrar; `--engine edge` ou `files` pra voz natural ou gravada) |
+| `python scripts/m8_music.py --total 116 --sections "0:intro,…"` | M8: trilha sintetizada, com trechos que acompanham a história (gancho, tensão, crescendo, clímax) |
+| `python scripts/m8_assemble.py docs/m8_corte_v3.json --out outputs/corte_v3.mp4` | M8: corte a partir de um plano em JSON: cenas no tempo da fala, legendas tiradas da narração, rótulos, trilha que abaixa sob a voz, áudio em −14 LUFS |
 | `python scripts/m8_curve_video.py --runs final2_s0 --marks 32000:"…" 64000:"…"` | M8: curva de aprendizado animada, com contador de tentativas e as trocas de regra |
 | `python scripts/m8_brain_card.py TRAÇO --out outputs/cerebro.png` | M8: cartela do cérebro com rótulos (patas, DNg100, DNa02) e o que é fixo e ajustado |
 | `python scripts/m8_race.py TRAÇOS… --out outputs/corrida.mp4` | M8: rastros de tentativas vistos de cima, em raias (mostrou que os recordes do começo eram voltas em círculo) |

@@ -41,7 +41,13 @@ def load(runs: list[str]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--runs", nargs="+", required=True)
+    p.add_argument("--runs", nargs="+", default=[], help="execuções (curva da velocidade na avaliação)")
+    p.add_argument("--series", default="", help="JSON com 'attempts' e uma série (ex.: m8 grounded_series.json)")
+    p.add_argument("--key", default="grounded", help="série do JSON (--series)")
+    p.add_argument("--percent", action="store_true", help="série em fração: mostra em % (eixo de 0 a 100)")
+    p.add_argument("--smooth", type=int, default=1, help="média móvel centrada da série (pontos)")
+    p.add_argument("--subtitle", default="avaliação sem variação (a mosca média da população), nos testes do treino")
+    p.add_argument("--value", default="{v} cm/s", help="rótulo do ponto atual ({v} = valor)")
     p.add_argument("--marks", nargs="*", default=[], help="tentativa:rótulo das trocas de regra")
     p.add_argument("--title", default="Velocidade, tentativa após tentativa")
     p.add_argument("--seconds", type=float, default=7.0, help="duração da animação")
@@ -55,7 +61,19 @@ def main() -> None:
     p.add_argument("--out", default="outputs/curva.mp4")
     args = p.parse_args()
 
-    att, speed, asked = load(args.runs)
+    if args.series:
+        data = json.loads(Path(args.series).read_text(encoding="utf-8"))
+        att = np.array(data["attempts"], float)
+        speed = np.array(data[args.key], float) * (100.0 if args.percent else 1.0)
+        if args.smooth > 1:  # média móvel centrada (as médias por geração saem de ~40 tentativas)
+            n = args.smooth // 2
+            pad = np.concatenate([np.full(n, speed[0]), speed, np.full(n, speed[-1])])
+            speed = np.convolve(pad, np.ones(2 * n + 1) / (2 * n + 1), "valid")
+        asked = None
+        if args.percent:
+            args.ymax = 100.0
+    else:
+        att, speed, asked = load(args.runs)
     marks = [(float(m.split(":", 1)[0]), m.split(":", 1)[1]) for m in args.marks]
     x0, x1, y0, y1 = 130, W - 60, 150, H - args.bottom  # área do gráfico
     total = att[-1]
@@ -81,13 +99,12 @@ def main() -> None:
         img = Image.new("RGB", (W, H), tuple(int(c) for c in BG))
         d = ImageDraw.Draw(img)
         d.text((40, 30), args.title, font=f_title, fill=(235, 235, 245))
-        d.text((40, 76), "avaliação sem variação (a mosca média da população), nos testes do treino", font=f_axis,
-               fill=(150, 155, 170))
+        d.text((40, 76), args.subtitle, font=f_axis, fill=(150, 155, 170))
         d.text((W - 40, 34), f"tentativa #{int(now):,}".replace(",", "."), font=f_count, fill=(255, 200, 90), anchor="ra")
-        for v in range(0, int(args.ymax) + 1):
+        for v in (range(0, 101, 20) if args.percent else range(0, int(args.ymax) + 1)):
             _, y = px(0, v)
             d.line([(x0, y), (x1, y)], fill=(34, 38, 48), width=1)
-            d.text((x0 - 14, y), f"{v} cm/s", font=f_axis, fill=(130, 135, 150), anchor="rm")
+            d.text((x0 - 14, y), f"{v}%" if args.percent else f"{v} cm/s", font=f_axis, fill=(130, 135, 150), anchor="rm")
         ticks = ([1, 10, 100, 1000, 10000, int(total)] if args.scale == "log" else
                  [1, 1000, 5000, 20000, 40000, 60000, int(total)] if args.scale == "sqrt" else
                  range(0, int(total) + 1, 20000))
@@ -106,18 +123,20 @@ def main() -> None:
             d.ellipse([fx - 6, fy - 6, fx + 6, fy + 6], fill=(160, 165, 180))
             d.text((fx + 10, fy - 30), lab1, font=f_axis, fill=(170, 175, 190))
         if k > 1:
-            d.line([px(a, v) for a, v in zip(att[:k], asked[:k])], fill=(110, 110, 120), width=2)
+            if asked is not None:
+                d.line([px(a, v) for a, v in zip(att[:k], asked[:k])], fill=(110, 110, 120), width=2)
             d.line([px(a, v) for a, v in zip(att[:k], speed[:k])], fill=(255, 170, 60), width=4)
             hx, hy = px(att[k - 1], speed[k - 1])
             d.ellipse([hx - 7, hy - 7, hx + 7, hy + 7], fill=(255, 170, 60))
-            d.text((min(hx + 12, x1 - 90), hy - 34), f"{br(speed[k - 1])} cm/s", font=f_lab, fill=(255, 210, 150))
-        if k > 1:
-            lx, ly = px(att[min(k, len(att)) - 1], asked[min(k, len(asked)) - 1])
-            d.text((x1, ly - 26), "pedido", font=f_axis, fill=(130, 130, 140), anchor="ra")
+            value = args.value.format(v=f"{speed[k - 1]:.0f}" if args.percent else br(speed[k - 1]))
+            d.text((min(hx + 12, x1 - 150), hy - 34), value, font=f_lab, fill=(255, 210, 150))
+            if asked is not None:
+                lx, ly = px(att[min(k, len(att)) - 1], asked[min(k, len(asked)) - 1])
+                d.text((x1, ly - 26), "pedido", font=f_axis, fill=(130, 130, 140), anchor="ra")
         ff.stdin.write(img.tobytes())
     ff.stdin.close()
     ff.wait()
-    print(f"{len(att)} avaliações até {int(total):,} tentativas -> {args.out}".replace(",", "."))
+    print(f"{len(att)} pontos até {int(total):,} tentativas -> {args.out}".replace(",", "."))
 
 
 if __name__ == "__main__":

@@ -176,7 +176,7 @@ class Trace:
 
 class FlyView:
     def __init__(self, width: int, distance: float, elevation: float, crop: int = 0, toe_out_deg: float = 0.0,
-                 body: str = "skate"):
+                 body: str = "skate", track: str = "thorax"):
         if body == "walk":  # conectoma que anda (M4): o corpo de caminhada, sem patins
             from mosca.body.fly import PhysicsConfig, build_fly_spec
 
@@ -188,7 +188,7 @@ class FlyView:
         self.renderer = mujoco.Renderer(self.model, height=H, width=width)
         self.crop = crop or width
         self.cam = mujoco.MjvCamera()
-        self.cam.type, self.cam.trackbodyid = mujoco.mjtCamera.mjCAMERA_TRACKING, self.model.body("thorax").id
+        self.cam.type, self.cam.trackbodyid = mujoco.mjtCamera.mjCAMERA_TRACKING, self.model.body(track).id
         self.cam.distance, self.cam.elevation, self.cam.azimuth = distance, elevation, 120
         self.width = self.crop
         self.full_width = width
@@ -282,6 +282,7 @@ class Trail:
 
         if self.ref is not None:
             d.line(px(self.ref[::20]), fill=(165, 165, 175), width=2)
+            d.text((x0 + self.SIZE - 8, y0 + 4), "cinza: sem estímulo", font=fonts[2], fill=(120, 120, 130), anchor="ra")
         p = self.paths[which][: k + 1: 20]
         if len(p) > 1:
             d.line(px(p), fill=color, width=3)
@@ -291,7 +292,8 @@ class Trail:
         if bar < self.SIZE - 20:
             d.line([(x0 + 10, y0 + self.SIZE - 12), (x0 + 10 + bar, y0 + self.SIZE - 12)], fill=(40, 40, 50), width=2)
             d.text((x0 + 10, y0 + self.SIZE - 32), "1 cm", font=fonts[2], fill=(40, 40, 50))
-        d.text((x0 + 8, y0 + 4), "visto de cima", font=fonts[2], fill=(90, 90, 100))
+        d.text((x0 + 8, y0 + 4) if self.ref is None else (x0 + 8, y0 + self.SIZE - 52), "visto de cima", font=fonts[2],
+               fill=(90, 90, 100))
 
 
 def brain_image(panel: BrainPanel, rates: np.ndarray, n: int, fonts, legend: bool = True) -> Image.Image:
@@ -357,9 +359,10 @@ def render_rhythm(path: str, args) -> None:
             if keep.sum() > 1:
                 d.line(list(zip(xs[keep], yb - y[keep])), fill=COLORS["motor"][0], width=2)
             d.line([(x0, yb), (x1, yb)], fill=(50, 55, 65), width=1)
-            leg = leg_of.get(int(i), "_").split("_")
-            d.text((x0 - 70, yb - 22), " ".join(LEG_NAMES.get(part, part) for part in leg),
-                   font=f_small, fill=(160, 165, 180))
+            leg = " ".join(LEG_NAMES.get(part, part) for part in leg_of.get(int(i), "_").split("_"))
+            prev = " ".join(LEG_NAMES.get(part, part) for part in leg_of.get(int(top[j - 1]), "_").split("_")) if j else None
+            if leg != prev:  # o nome da pata só quando muda (todos os traços podem ser da mesma pata)
+                d.text((x0 - 70, yb - 22), leg, font=f_small, fill=(160, 165, 180))
         d.text((x0, y0 + row * 7 + 10), f"t = {br(t, 3)} s · câmera lenta {args.slow:g}×", font=f_mid, fill=(200, 200, 215))
         ff.stdin.write(frame.tobytes())
     ff.stdin.close()
@@ -465,6 +468,8 @@ def main() -> None:
     p.add_argument("--elevation", type=float, default=-30.0, help="graus; abaixo de −23 o horizonte sai do quadro")
     p.add_argument("--label", default="", help="rótulo extra (ex.: 'treino, com variação da população')")
     p.add_argument("--titles", nargs="+", default=None, help="título de cada lado (substitui o automático)")
+    p.add_argument("--subtitles", nargs="+", default=None, help="subtítulo de cada lado (substitui o automático)")
+    p.add_argument("--track", default="thorax", help="corpo que a câmera acompanha (ex.: skate_T3_right, para um close)")
     p.add_argument("--rate-ref", type=float, default=0.0,
                    help="taxa (Hz) de brilho cheio; padrão 60, e na cena do ritmo o percentil 90 dos picos")
     p.add_argument("--summary-always", action="store_true", help="grade: placar o tempo todo (padrão: no fim)")
@@ -495,8 +500,9 @@ def main() -> None:
     body = traces[0].meta.get("body", "skate")
     if len(traces) > 1 and (traces[1].meta.get("toe_out_deg", 0.0), traces[1].meta.get("body", "skate")) != (toe, body):
         sys.exit("lado a lado só com o mesmo corpo e o mesmo ângulo de patim nos dois lados")
-    view = FlyView(width, args.distance, args.elevation, toe_out_deg=toe, body=body) if len(traces) == 1 else \
-        FlyView(FLY_W, args.distance, args.elevation, crop=width - strip, toe_out_deg=toe, body=body)
+    view = FlyView(width, args.distance, args.elevation, toe_out_deg=toe, body=body, track=args.track) \
+        if len(traces) == 1 else FlyView(FLY_W, args.distance, args.elevation, crop=width - strip, toe_out_deg=toe,
+                                         body=body, track=args.track)
     fonts = font(34, True), font(20), font(16)
     trail = Trail(traces, Trace(args.trail_ref) if args.trail_ref else None) if args.trail else None
     trail_colors = [(220, 60, 110), (40, 120, 220)]
@@ -518,6 +524,8 @@ def main() -> None:
             title, subtitle = tr.title()
             if args.titles and col < len(args.titles):
                 title = args.titles[col]
+            if args.subtitles and col < len(args.subtitles):
+                subtitle = args.subtitles[col]
             if args.label:
                 subtitle += f" · {args.label}"
             lines = [f"t = {br(min(t, tr.seconds), 3)} s   ·   câmera lenta {args.slow:g}×",

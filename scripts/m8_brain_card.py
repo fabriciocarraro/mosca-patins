@@ -61,22 +61,20 @@ def main() -> None:
     d.text((x0, 60), "O cordão nervoso de", font=f_title, fill=(235, 235, 245))
     d.text((x0, 108), "uma mosca de verdade", font=f_title, fill=(235, 235, 245))
     lines = [
-        (f"{graph.n:,}".replace(",", ".") + " neurônios, mapeados um a um", (200, 205, 220)),
-        ("num macho real (MaleCNS, Janelia).", (200, 205, 220)),
+        ("a “medula espinhal” dela", (150, 155, 170)),
         ("", None),
-        ("Fixo: quem se liga com quem,", (120, 255, 120)),
-        ("e se a ligação excita ou inibe.", (120, 255, 120)),
+        (f"{graph.n:,}".replace(",", ".") + " neurônios, mapeados um a um", (215, 220, 232)),
         ("", None),
-        ("Ajustado pelo treino: a força das", (255, 200, 90)),
-        ("ligações e o “volume” de cada", (255, 200, 90)),
-        ("tipo de neurônio.", (255, 200, 90)),
+        ("Fixo: quem se liga com quem", (120, 255, 120)),
+        ("Ajustado pelo treino: a força das ligações", (255, 200, 90)),
     ]
-    y = 190
+    y = 168
     for text, color in lines:
         if text:
             d.text((x0, y), text, font=f_text, fill=color)
-        y += 36
-    d.text((x0, H - 60), "brilho = atividade num instante de um teste re-simulado", font=f_small, fill=(130, 135, 150))
+        y += 40
+    d.text((x0, H - 60), "dados: MaleCNS (Janelia) · brilho = atividade num instante de um teste re-simulado", font=f_small,
+           fill=(130, 135, 150))
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     img.save(args.out)
     print(f"cartela do cérebro -> {args.out}")
