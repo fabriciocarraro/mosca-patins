@@ -79,6 +79,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--sigma-walk", type=float, default=0.2, help="σ do log-ganho do comando de velocidade (DNg100)")
     p.add_argument("--sigma-turn", type=float, default=0.2, help="σ do log-ganho do comando de giro (DNa02)")
     p.add_argument("--turn-side-gains", action="store_true", help="ganho de giro separado para o lado direito")
+    p.add_argument("--turn-cross", action="store_true",
+                   help="comando de giro cruzado: giro à esquerda nos DNa02 direitos (a via evoluída vira para o lado oposto)")
     p.add_argument("--neuron-theta", action="store_true",
                    help="fator de limiar por neurônio também evoluído (ajustes diferentes em cada lado)")
     p.add_argument("--sigma-neuron", type=float, default=0.05, help="σ do log-fator de limiar por neurônio")
@@ -188,7 +190,8 @@ def main() -> None:
                                 haltere_offset=args.haltere_offset, turn_cells=tuple(args.turn_cells.split(",")),
                                 turn_gain=args.turn_gain, enc_std=args.enc_std, dec_gain=args.dec_gain,
                                 seed=args.seed, net_dtype=args.net_dtype, deterministic=args.deterministic,
-                                turn_side_gains=args.turn_side_gains, neuron_theta=args.neuron_theta)
+                                turn_side_gains=args.turn_side_gains, turn_cross=args.turn_cross,
+                                neuron_theta=args.neuron_theta)
     env = SkateVecEnv(env_cfg)
     pol = ConnectomePolicy(Connectome.load(Path(args.graph)), ctrl_cfg, device=device)
     for q in pol.parameters():

@@ -75,6 +75,9 @@ class ControllerConfig:
     # Ganho de giro separado para o lado direito (log_turn_gain_r): a via do DNa02 direito é mais fraca na
     # mosca patinadora evoluída, e um ganho só não compensa os dois lados.
     turn_side_gains: bool = False
+    # Comando de giro cruzado: giro à esquerda (positivo) nos `turn_cells` do lado direito, e vice-versa. Na mosca
+    # patinadora evoluída, o DNa01 e o DNa02 de um lado a viram para o lado oposto (docs/m6_treino_final2.md).
+    turn_cross: bool = False
     # Fator de limiar por neurônio além do por tipo (mosca.brain.rate_model, `neuron_theta`).
     neuron_theta: bool = False
     # "float64": estado e parâmetros da rede em precisão dupla. Na GPU, a multiplicação esparsa soma em
@@ -162,7 +165,8 @@ class ConnectomePolicy(nn.Module):
         self.register_buffer("dng100", torch.as_tensor(dng100, dtype=torch.long, device=device))
         self.log_walk_gain = nn.Parameter(torch.tensor(float(np.log(cfg.walk_gain)), device=device))
 
-        # Comando de giro nos descendentes `turn_cells` de cada lado (esquerdo para giro positivo, anti-horário).
+        # Comando de giro nos descendentes `turn_cells` de cada lado (esquerdo para giro positivo, anti-horário;
+        # com `turn_cross`, o direito).
         turn_l = np.concatenate([c.groups[f"{cell}_L"] for cell in cfg.turn_cells])
         turn_r = np.concatenate([c.groups[f"{cell}_R"] for cell in cfg.turn_cells])
         self.register_buffer("turn_l", torch.as_tensor(turn_l, dtype=torch.long, device=device))
@@ -291,8 +295,9 @@ class ConnectomePolicy(nn.Module):
         if self.cfg.turn_side_gains:
             log_r = self.log_turn_gain_r if off is None or "log_turn_gain_r" not in off else self.log_turn_gain_r + off["log_turn_gain_r"]
             turn_r = log_r.exp()
-        current = current.index_add(0, self.turn_l, (turn * torch.relu(yaw))[None, :].expand(len(self.turn_l), -1))
-        return current.index_add(0, self.turn_r, (turn_r * torch.relu(-yaw))[None, :].expand(len(self.turn_r), -1))
+        left, right = (torch.relu(-yaw), torch.relu(yaw)) if self.cfg.turn_cross else (torch.relu(yaw), torch.relu(-yaw))
+        current = current.index_add(0, self.turn_l, (turn * left)[None, :].expand(len(self.turn_l), -1))
+        return current.index_add(0, self.turn_r, (turn_r * right)[None, :].expand(len(self.turn_r), -1))
 
     def decode(self, r: torch.Tensor) -> torch.Tensor:
         """Ação média (lote, n_out) a partir das taxas (N, lote)."""

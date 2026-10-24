@@ -54,3 +54,20 @@ def test_population_column_matches_a_separate_fly():
     for _ in range(3):
         r1, second = pol(r1, obs[1:], vcmd[1:])
     assert torch.allclose(both[0], first[0], atol=1e-5) and torch.allclose(both[1], second[0], atol=1e-5)
+
+
+@pytest.mark.skipif(not GRAPH.exists(), reason="grafo do controlador não montado")
+def test_turn_cross_sends_left_turns_to_the_right_side():
+    from mosca.brain.controller import ConnectomePolicy, ControllerConfig
+    from mosca.brain.graph import Connectome
+
+    graph = Connectome.load(GRAPH)
+    for cross in (False, True):
+        pol = ConnectomePolicy(graph, ControllerConfig(turn_cells=("DNa02",), turn_cross=cross))
+        obs = torch.zeros(2, 400)
+        obs[0, 184] = 1.0  # giro pedido de +1 rad/s (à esquerda); a coluna 1 não pede giro
+        with torch.no_grad():
+            cur = pol.currents(obs, torch.zeros(2))
+        d = cur[:, 0] - cur[:, 1]
+        near, far = (pol.turn_r, pol.turn_l) if cross else (pol.turn_l, pol.turn_r)
+        assert torch.all(d[near] > 0) and torch.all(d[far] == 0)
