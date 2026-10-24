@@ -1,0 +1,31 @@
+{
+  "fps": 30,
+  "nota": "Primeiro corte de rascunho (24/10/2026), na ordem do roteiro (docs/m8_roteiro.md). Os clipes de patins são do final2_s0 (tentativas gravadas) e da geração 1400 da linhagem (testes); narração e trilha ficam com o editor.",
+  "segments": [
+    {"card": ["Tentativa #1", "A mosca nunca viu um patim."], "seconds": 3},
+    {"clip": "outputs/f2_tentativa_1.mp4", "start": 0, "seconds": 6},
+    {"card": ["Tentativa #9", "a primeira queda"], "seconds": 2.5},
+    {"clip": "outputs/f2_tentativa_9.mp4", "start": 0},
+    {"card": ["Antes de qualquer treino", "estimular o DNg100, o neurônio de andar, faz o cordão nervoso gerar um ritmo sozinho"], "seconds": 4},
+    {"clip": "outputs/m8_ritmo.mp4", "start": 0},
+    {"card": ["Primeiro, andar", "o conectoma aprendeu imitando a caminhada de moscas reais"], "seconds": 3.5},
+    {"clip": "outputs/anda_teste.mp4", "start": 0},
+    {"card": ["Depois, patinar", "cada tentativa de treino é uma variação sorteada da rede"], "seconds": 3.5},
+    {"clip": "outputs/f2_tentativa_47.mp4", "start": 2, "seconds": 3},
+    {"clip": "outputs/f2_tentativa_75.mp4", "start": 2, "seconds": 3},
+    {"clip": "outputs/f2_tentativa_130.mp4", "start": 2, "seconds": 3},
+    {"clip": "outputs/f2_tentativa_318.mp4", "start": 2, "seconds": 3},
+    {"clip": "outputs/f2_tentativa_444.mp4", "start": 2, "seconds": 3},
+    {"clip": "outputs/f2_tentativa_4658.mp4", "start": 2, "seconds": 3},
+    {"card": ["Tentativa #10.000", "pedido: fique parada"], "seconds": 2.5},
+    {"clip": "outputs/f2_tentativa_10000.mp4", "start": 2, "seconds": 3},
+    {"card": ["A regra do treino mudou duas vezes", "#32.001: cada patim no chão conta · #64.001: empurrão inicial, que some"], "seconds": 4},
+    {"image": "outputs/marcha_fases.png", "seconds": 9},
+    {"card": ["Provas causais", "o mesmo teste, com e sem intervenção no cérebro"], "seconds": 3},
+    {"clip": "outputs/prova_DNg100_g1400.mp4", "start": 0},
+    {"clip": "outputs/prova_DNa02_g1400.mp4", "start": 0},
+    {"card": ["O desafio final", "os 20 testes fixos, sem escolher"], "seconds": 3},
+    {"clip": "outputs/grade20_g1400.mp4", "start": 0},
+    {"card": ["A virada", "conectoma real × embaralhado × rede comum: em treino"], "seconds": 3}
+  ]
+}

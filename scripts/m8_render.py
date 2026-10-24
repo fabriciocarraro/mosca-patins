@@ -204,6 +204,53 @@ class FlyView:
         return img
 
 
+class Trail:
+    """Mapa pequeno visto de cima com o rastro do tórax: cada traço na sua cor e, se houver, o de referência (ex.: o
+    mesmo teste sem intervenção) em cinza. O rumo inicial aponta para cima; escala comum a todos os traços."""
+
+    SIZE = 170
+
+    def __init__(self, traces: list, ref=None):
+        self.paths = [self.path(tr) for tr in traces]
+        self.ref = self.path(ref) if ref is not None else None
+        allp = np.concatenate(self.paths + ([self.ref] if self.ref is not None else []))
+        lo, hi = allp.min(0), allp.max(0)
+        self.center = (lo + hi) / 2
+        self.scale = (self.SIZE - 30) / max(float((hi - lo).max()), 0.5)  # px por cm (no mínimo 0,5 cm de lado)
+
+    @staticmethod
+    def path(tr) -> np.ndarray:
+        root = tr.meta.get("root_qadr", 0)
+        q = tr.qpos
+        w, x, y, z = q[0, root + 3:root + 7]
+        h0 = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))  # rumo inicial
+        p = q[:, root:root + 2] - q[0, root:root + 2]
+        c, s = np.cos(np.pi / 2 - h0), np.sin(np.pi / 2 - h0)
+        return p @ np.array([[c, s], [-s, c]])  # gira para o rumo inicial apontar para cima
+
+    def draw(self, img: Image.Image, which: int, k: int, color, fonts) -> None:
+        d = ImageDraw.Draw(img)
+        x0, y0 = img.width - self.SIZE - 14, 104
+        d.rectangle([x0, y0, x0 + self.SIZE, y0 + self.SIZE], fill=(250, 250, 252), outline=(150, 150, 160))
+
+        def px(p):
+            return [(x0 + self.SIZE / 2 + (a - self.center[0]) * self.scale,
+                     y0 + self.SIZE / 2 - (b - self.center[1]) * self.scale) for a, b in p]
+
+        if self.ref is not None:
+            d.line(px(self.ref[::20]), fill=(165, 165, 175), width=2)
+        p = self.paths[which][: k + 1: 20]
+        if len(p) > 1:
+            d.line(px(p), fill=color, width=3)
+        cx, cy = px(self.paths[which][k:k + 1])[0]
+        d.ellipse([cx - 4, cy - 4, cx + 4, cy + 4], fill=color)
+        bar = self.scale * 1.0  # 1 cm
+        if bar < self.SIZE - 20:
+            d.line([(x0 + 10, y0 + self.SIZE - 12), (x0 + 10 + bar, y0 + self.SIZE - 12)], fill=(40, 40, 50), width=2)
+            d.text((x0 + 10, y0 + self.SIZE - 32), "1 cm", font=fonts[2], fill=(40, 40, 50))
+        d.text((x0 + 8, y0 + 4), "visto de cima", font=fonts[2], fill=(90, 90, 100))
+
+
 def brain_image(panel: BrainPanel, rates: np.ndarray, n: int, fonts, legend: bool = True) -> Image.Image:
     _, f_mid, f_small = fonts
     img = Image.fromarray(panel.render(rates))
@@ -378,6 +425,8 @@ def main() -> None:
     p.add_argument("--rate-ref", type=float, default=0.0,
                    help="taxa (Hz) de brilho cheio; padrão 60, e na cena do ritmo o percentil 90 dos picos")
     p.add_argument("--summary-always", action="store_true", help="grade: placar o tempo todo (padrão: no fim)")
+    p.add_argument("--trail", action="store_true", help="mapa pequeno visto de cima com o rastro do tórax")
+    p.add_argument("--trail-ref", default="", help="traço de referência no mapa, em cinza (ex.: o teste sem intervenção)")
     args = p.parse_args()
     mode = json.loads(str(np.load(args.trace)["meta"])).get("mode")
     if mode == "ritmo":
@@ -402,6 +451,8 @@ def main() -> None:
     view = FlyView(width, args.distance, args.elevation, toe_out_deg=toe, body=body) if len(traces) == 1 else \
         FlyView(FLY_W, args.distance, args.elevation, crop=width - strip, toe_out_deg=toe, body=body)
     fonts = font(34, True), font(20), font(16)
+    trail = Trail(traces, Trace(args.trail_ref) if args.trail_ref else None) if args.trail else None
+    trail_colors = [(220, 60, 110), (40, 120, 220)]
 
     total = max(tr.seconds for tr in traces)
     end = total if args.seconds <= 0 else min(total, args.start + args.seconds)
@@ -423,6 +474,8 @@ def main() -> None:
             lines = [f"t = {br(min(t, tr.seconds), 3)} s   ·   câmera lenta {args.slow:g}×",
                      f"{br(speed)} cm/s (pedido: {br(tr.meta['v_cmd'])})"]
             fly = view.render(qpos, title, subtitle, lines, fonts)
+            if trail is not None:
+                trail.draw(fly, col, min(len(tr.qpos) - 1, int(round(t / tr.timestep))), trail_colors[col], fonts)
             frame.paste(fly, (col * width, 0))
             if len(traces) == 1:
                 frame.paste(brain_image(panel, rates, graph.n, fonts), (FLY_W, 0))

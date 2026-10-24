@@ -61,8 +61,7 @@ registro do próprio `final2_s0` quando ele terminar.
 
 - **O que se vê:** o conectoma que anda, num teste fixo re-simulado a partir do checkpoint `anda_r5I/best_it6`, sem
   patins. Ele aprendeu imitando a política de caminhada do flybody. O DNa02 de um lado o vira para esse lado.
-- **Estado:** o modo de teste a partir de checkpoint existe (`m8_trace.py --checkpoint`), mas só para o corpo de
-  patins. Falta o corpo de caminhada.
+- **Estado:** rascunho renderizado (`m8_trace.py --walk`, no notebook). Falta refazer na GPU do Spark, com 5 s.
 
 ### 5. Montagem do treino de patins
 
@@ -82,24 +81,27 @@ Números reais, todos da lista automática de marcos. Saem da linhagem e serão 
 
 **Arco da história:** a marcha muda em três fases, e cada troca de regra aparece rotulada na tentativa em que acontece.
 
-| Tentativas | Regra | O que muda na marcha (testes fixos, sem variação) |
+| Tentativas | Regra | O que muda na marcha (teste fixo 2, pedindo 3,5 cm/s, sem variação; `m8_gait.py` na GPU do Spark) |
 |---|---|---|
-| #1 a #32.000 | patins no ar não pagam mais nada | ela patina empurrando sobretudo com a pata do meio esquerda (52% do empurrão), com a pata do meio direita no ar o tempo todo (49% dos patins no chão na geração 500) |
-| #32.001 a #64.000 | regra de apoio: cada patim no chão conta | os patins no chão sobem para ~68%, e o empurrão se divide entre as patas |
-| #64.001 a #89.600 | empurrão inicial, que some em 200 gerações | patins no chão 77%, nenhuma pata no ar o tempo todo, nenhum patim com mais de 35% do empurrão |
+| #1 a #32.000 | patins no ar não pagam mais nada | na geração 500: 55% dos patins no chão; a pata do meio direita fica no ar 82% do tempo; o empurrão vem do meio esquerdo (38%) e do trás direito (31%) |
+| #32.001 a #64.000 | regra de apoio: cada patim no chão conta | na geração 1000: 72% dos patins no chão |
+| #64.001 a #89.600 | empurrão inicial, que some em 200 gerações | na geração 1400: 77% no chão, nenhum patim abaixo de 54%, nenhum com mais de 35% do empurrão |
 
 - **Gráficos:**
   - `m8_curves.py`: velocidade e % deslizando por tentativa, com as trocas de regra marcadas;
-  - `m8_gait.py`: diagrama de contato e parcela do empurrão de cada patim nas gerações 100, 500, 1000 e 1400. Mostra
-    as patas descendo para o chão a cada fase.
+  - `m8_gait_video.py`: diagrama de contato e parcela do empurrão de cada patim nas gerações 500, 1000 e 1400 (rascunho
+    em `outputs/marcha_fases.png`). Mostra as patas descendo para o chão a cada fase. A geração 100 ficou de fora:
+    pedindo 3,5 cm/s, ela ainda fica parada (o currículo estava em 2 cm/s).
 - **Rótulos:**
   - os clipes de treino levam "treino (variação da população)";
   - os de teste levam "teste, sem variação";
   - as tentativas com empurrão levam "com empurrão inicial".
 - **Estado:**
-  - #1, #2 e #9 re-simuladas, do primeiro treino final, que tem a mesma geração 0;
-  - falta re-simular os marcos e os testes das gerações 100, 500, 1000 e 1400 no `final2_s0`;
-  - falta uma "colagem" de vários clipes curtos com o contador de tentativas.
+  - os marcos de #1 a #10.000 já foram re-simulados no `final2_s0` (física bit a bit, cérebro com diferença 0) e
+    renderizados;
+  - o diagrama de marcha está em rascunho (gerações 500, 1000 e 1400 da linhagem; refazer no `final2_s0` quando ele
+    chegar lá);
+  - a colagem está no corte de rascunho (`docs/m8_corte_rascunho.json`, `m8_assemble.py`).
 
 ### 6. Painel do cérebro
 
@@ -115,14 +117,16 @@ Fica ao lado o tempo todo. Uma vez, de perto, mostrar o DNg100 aceso enquanto el
     do giro muda.
   - Mostrar como é: "o neurônio de virar mexe no rumo, mas ela ainda não aprendeu a usá-lo".
   - O conectoma que anda (M4) vira para o lado estimulado em 100% dos testes, e pode aparecer como contraste.
-- **Estado:** DNg100 renderizado lado a lado no primeiro treino final. Falta refazer no `final2_s0`.
+- **Estado:** DNg100 e DNa02 renderizados lado a lado a partir da geração 1400 da evolui_u (o mesmo checkpoint que o
+  `final2_s0` terá), com o rastro visto de cima. No teste 1, o DNa02 esquerdo vira a mosca para a direita (−0,23
+  rad/s) e o direito, para a esquerda (+0,17). Conferir o checkpoint do `final2_s0` quando ele chegar à 1400.
 
 ### 8. Desafio final: a pista reta com os 20 testes
 
 - **Sem curvas, o slalom fica de fora** (decisão registrada em `docs/m6_treino_final2.md`).
 - **No lugar:** uma grade com as 20 corridas de teste, pedindo 3,5 cm/s em linha reta, sem escolher a melhor. Na
   evolui_u, a mesma geração: 100% acima de 3 cm/s, 3,26 cm/s de média, sem quedas.
-- **Estado:** falta a grade no `m8_render.py`.
+- **Estado:** grade renderizada a partir da geração 1400 da evolui_u: 20 de 20 acima de 3 cm/s, sem quedas.
 
 ### 9. A virada: conectoma real × embaralhado × MLP (M7)
 
@@ -153,13 +157,17 @@ Prontas:
 - `m8_gait.py`: diagrama de contato, ângulos e empurrão de cada patim;
 - `m3_rhythm_full.py --save-trace`: atividade da rede no teste de ritmo.
 
+Prontas também (24/10):
+
+- `m8_trace.py --tests 20` e `--walk`: a grade da pista reta e o conectoma que anda sem patins;
+- `m8_render.py --trail`: mapa pequeno visto de cima com o rastro (e o do teste sem intervenção, em cinza);
+- `m8_gait_video.py`: diagrama de marcha por geração;
+- `m8_assemble.py`: corte a partir de um plano em JSON (cartelas, trechos de clipes, imagens);
+- `m8_verify.py`: conferência de autenticidade (registro, hashes e re-simulação das posturas bit a bit).
+
 Faltam:
 
-1. Corpo de caminhada (M4) no `m8_trace.py` e no `m8_render.py`.
-2. No `m8_render.py`:
-   - grade dos 20 testes da pista reta;
-   - zoom em neurônios destacados.
-3. Versão do diagrama de marcha para o vídeo (as quatro gerações lado a lado).
-4. Montagem: cartelas de texto e concatenação com ffmpeg. Narração e trilha ficam com o editor (DaVinci).
-5. Conferência de autenticidade: um script que, para cada clipe da montagem, confere número da tentativa, geração,
-   hashes da captura e da política, e o desvio 0 da re-simulação (os metadados já vão no `.npz` de cada tentativa).
+1. Zoom em neurônios destacados no `m8_render.py`.
+2. Curvas de aprendizado e do M7 no estilo do vídeo (`m8_curves.py`).
+3. Refazer no `final2_s0` o que veio da linhagem (geração 1400, marcha) e rodar o `m8_verify.py` em todos os clipes.
+4. Narração e trilha, com o editor (DaVinci).
