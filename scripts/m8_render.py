@@ -58,6 +58,11 @@ def br(x: float, digits: int = 1) -> str:
     return f"{x:.{digits}f}".replace(".", ",")
 
 
+def br_slow(x: float) -> str:
+    """Fator de câmera lenta com vírgula decimal e sem zeros à toa (1,3; 8)."""
+    return f"{x:g}".replace(".", ",")
+
+
 def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
     for name in (("segoeuib.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf") if bold else
                  ("segoeui.ttf", "arial.ttf", "DejaVuSans.ttf")):
@@ -71,7 +76,7 @@ def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
 class BrainPanel:
     """Nuvem de pontos dos neurônios, projetada de cima (x para a direita, z para baixo)."""
 
-    def __init__(self, graph: Connectome, positions: Path):
+    def __init__(self, graph: Connectome, positions: Path, margin: int = 0):
         z = np.load(positions)
         assert (z["body_id"] == graph.body_id).all(), "posições de outro grafo"
         xyz = z["syn_centroid"].copy()
@@ -79,7 +84,8 @@ class BrainPanel:
         xyz[miss] = z["soma"][miss]
         xyz[~np.isfinite(xyz[:, 0])] = np.nanmedian(xyz, axis=0)
         u, v = xyz[:, 0], xyz[:, 2]
-        top, bottom = 70, H - 110
+        self.margin = margin  # faixa livre embaixo (legenda do corte): a nuvem e a legenda de cores ficam acima dela
+        top, bottom = 70, H - 110 - margin
         lo_u, hi_u, lo_v, hi_v = *np.percentile(u, [0.5, 99.5]), *np.percentile(v, [0.5, 99.5])
         scale = min((PANEL_W - 60) / (hi_u - lo_u), (bottom - top) / (hi_v - lo_v))
         self.px = np.clip(((u - (lo_u + hi_u) / 2) * scale + PANEL_W / 2).astype(int), 0, PANEL_W - 1)
@@ -176,7 +182,8 @@ class Trace:
 
 class FlyView:
     def __init__(self, width: int, distance: float, elevation: float, crop: int = 0, toe_out_deg: float = 0.0,
-                 body: str = "skate", track: str = "thorax"):
+                 body: str = "skate", track: str = "thorax", margin: int = 0):
+        self.margin = margin  # faixa livre embaixo (legenda do corte): régua, tempo e velocidade ficam acima dela
         if body == "walk":  # conectoma que anda (M4): o corpo de caminhada, sem patins
             from mosca.body.fly import PhysicsConfig, build_fly_spec
 
@@ -239,9 +246,9 @@ class FlyView:
         d.text((24, 18), title, font=f_big, fill=(15, 15, 20))
         d.text((24, 62), subtitle, font=f_mid, fill=(40, 40, 50))
         for i, line in enumerate(reversed(lines)):
-            d.text((24, H - 42 - 28 * i), line, font=f_mid, fill=(40, 40, 50))
+            d.text((24, H - self.margin - 42 - 28 * i), line, font=f_mid, fill=(40, 40, 50))
         bar = self.px_per_cm * 0.1  # 1 mm
-        x1, y1 = self.width - 40, H - 40
+        x1, y1 = self.width - 40, H - self.margin - 40
         d.line([(x1 - bar, y1), (x1, y1)], fill=(15, 15, 20), width=4)
         d.text((x1 - bar, y1 - 28), "1 mm", font=f_small, fill=(15, 15, 20))
         return img
@@ -303,7 +310,7 @@ def brain_image(panel: BrainPanel, rates: np.ndarray, n: int, fonts, legend: boo
     b.text((20, 16), "cordão nervoso da mosca (MaleCNS)", font=f_mid, fill=(230, 230, 240))
     b.text((20, 42), f"{n:,} neurônios · brilho = atividade".replace(",", "."), font=f_small, fill=(160, 165, 180))
     if legend:
-        y = H - 100
+        y = H - 100 - panel.margin
         for key in ("motor", "sensory", "dn", "DNg100", "DNa02"):
             col, name = COLORS[key]
             b.ellipse([(20, y + 4), (30, y + 14)], fill=col)
@@ -320,7 +327,7 @@ def render_rhythm(path: str, args) -> None:
     rates = z["rates"].astype(np.float32)  # (T, N), a cada meta["control_dt"]
     dt = meta["control_dt"]
     graph = Connectome.load(MALECNS_DIR / meta["graph"])
-    panel = BrainPanel(graph, MALECNS_DIR / "controller_positions.npz")
+    panel = BrainPanel(graph, MALECNS_DIR / "controller_positions.npz", args.bottom)
     motor = np.concatenate([graph.groups[k] for k in sorted(graph.groups) if k.startswith("motor_")])
     settled = rates[int(0.3 / dt):, motor]
     top = motor[np.argsort(settled.std(axis=0))[::-1][:6]]
@@ -328,7 +335,8 @@ def render_rhythm(path: str, args) -> None:
     peaks = rates.max(axis=0)
     rate_ref = args.rate_ref or max(0.5, float(np.median(peaks[peaks > 0.2])))
     f_big, f_mid, f_small = font(30, True), font(20), font(16)
-    x0, x1, y0, row = PANEL_W + 60, W - 40, 230, 70
+    x0, x1, y0 = PANEL_W + 60, W - 40, 200
+    row = min(70, (H - args.bottom - 50 - y0) // len(top))  # os traços e o tempo acima da legenda do corte
     t_end = len(rates) * dt if args.seconds <= 0 else min(len(rates) * dt, args.start + args.seconds)
     t_axis = np.arange(len(rates)) * dt
     out = args.out or str(Path("outputs") / (Path(path).stem + ".mp4"))
@@ -363,7 +371,8 @@ def render_rhythm(path: str, args) -> None:
             prev = " ".join(LEG_NAMES.get(part, part) for part in leg_of.get(int(top[j - 1]), "_").split("_")) if j else None
             if leg != prev:  # o nome da pata só quando muda (todos os traços podem ser da mesma pata)
                 d.text((x0 - 70, yb - 22), leg, font=f_small, fill=(160, 165, 180))
-        d.text((x0, y0 + row * 7 + 10), f"t = {br(t, 3)} s · câmera lenta {args.slow:g}×", font=f_mid, fill=(200, 200, 215))
+        d.text((x0, y0 + row * len(top) + 10), f"t = {br(t, 3)} s · câmera lenta {br_slow(args.slow)}×", font=f_mid,
+               fill=(200, 200, 215))
         ff.stdin.write(frame.tobytes())
     ff.stdin.close()
     ff.wait()
@@ -386,7 +395,7 @@ def render_grid(path: str, args) -> None:
     cols = 5 if n > 12 else 4
     rows = -(-n // cols)
     header = 64
-    tw, th = W // cols, (H - header - args.grid_bottom) // rows
+    tw, th = W // cols, (H - header - args.bottom) // rows
     model = build_skater(skates=SkateConfig(toe_out_deg=meta.get("toe_out_deg", 0.0)))
     model.vis.global_.offwidth, model.vis.global_.offheight = max(tw, 640), max(th, 480)
     data = mujoco.MjData(model)
@@ -415,7 +424,8 @@ def render_grid(path: str, args) -> None:
         d.text((16, 8), args.titles[0] if args.titles else f"Os {n} testes fixos, sem escolher", font=f_big,
                fill=(235, 235, 245))
         d.text((16, 40), f"geração {meta['generation']} · teste, sem variação · pedido: {br(meta['v_cmd'])} cm/s em linha "
-               f"reta · t = {br(min(t, total), 2)} s · câmera lenta {args.slow:g}×", font=f_small, fill=(170, 175, 190))
+               f"reta · t = {br(min(t, total), 2)} s · câmera lenta {br_slow(args.slow)}×", font=f_small,
+               fill=(170, 175, 190))
         if args.summary_always or t >= end - 0.5:  # o placar nos últimos 0,5 s simulados
             d.text((W - 16, 12), f"{fast} de {n} com média ≥3 cm/s · quedas: {falls}", font=f_mid, fill=(255, 200, 110),
                    anchor="ra")
@@ -473,7 +483,9 @@ def main() -> None:
     p.add_argument("--rate-ref", type=float, default=0.0,
                    help="taxa (Hz) de brilho cheio; padrão 60, e na cena do ritmo o percentil 90 dos picos")
     p.add_argument("--summary-always", action="store_true", help="grade: placar o tempo todo (padrão: no fim)")
-    p.add_argument("--grid-bottom", type=int, default=0, help="grade: margem livre embaixo (px), para a legenda do corte")
+    p.add_argument("--bottom", "--grid-bottom", dest="bottom", type=int, default=0,
+                   help="faixa livre embaixo (px) para a legenda do corte: régua, tempo, câmera lenta, velocidade, legenda "
+                        "de cores e grade ficam acima dela")
     p.add_argument("--follow", type=float, default=None,
                    help="câmera que acompanha o rumo da mosca: azimute relativo ao rumo (graus; 90 = de lado)")
     p.add_argument("--air", action="store_true", help="patins no ar em amarelo (bota vermelha com o patim no chão)")
@@ -493,16 +505,17 @@ def main() -> None:
         for tr in traces:
             tr.by_graph = True
     graph = Connectome.load(MALECNS_DIR / traces[0].meta.get("graph", "controller_graph_min5.npz"))
-    panel = BrainPanel(graph, MALECNS_DIR / "controller_positions.npz")
+    panel = BrainPanel(graph, MALECNS_DIR / "controller_positions.npz", args.bottom)
     width = FLY_W if len(traces) == 1 else W // 2
     strip = 200  # lado a lado: faixa do cérebro (o centro do painel, onde fica o cordão nervoso)
     toe = traces[0].meta.get("toe_out_deg", 0.0)  # o modelo do desenho com o mesmo ângulo de patim da simulação
     body = traces[0].meta.get("body", "skate")
     if len(traces) > 1 and (traces[1].meta.get("toe_out_deg", 0.0), traces[1].meta.get("body", "skate")) != (toe, body):
         sys.exit("lado a lado só com o mesmo corpo e o mesmo ângulo de patim nos dois lados")
-    view = FlyView(width, args.distance, args.elevation, toe_out_deg=toe, body=body, track=args.track) \
+    view = FlyView(width, args.distance, args.elevation, toe_out_deg=toe, body=body, track=args.track,
+                   margin=args.bottom) \
         if len(traces) == 1 else FlyView(FLY_W, args.distance, args.elevation, crop=width - strip, toe_out_deg=toe,
-                                         body=body, track=args.track)
+                                         body=body, track=args.track, margin=args.bottom)
     fonts = font(34, True), font(20), font(16)
     trail = Trail(traces, Trace(args.trail_ref) if args.trail_ref else None) if args.trail else None
     trail_colors = [(220, 60, 110), (40, 120, 220)]
@@ -528,7 +541,7 @@ def main() -> None:
                 subtitle = args.subtitles[col]
             if args.label:
                 subtitle += f" · {args.label}"
-            lines = [f"t = {br(min(t, tr.seconds), 3)} s   ·   câmera lenta {args.slow:g}×",
+            lines = [f"t = {br(min(t, tr.seconds), 3)} s   ·   câmera lenta {br_slow(args.slow)}×",
                      f"{br(speed)} cm/s (pedido: {br(tr.meta['v_cmd'])})"]
             az = None
             if heads is not None:

@@ -7,7 +7,8 @@ Cada segmento aceita:
 - "seconds": duração mínima da cena (num clipe que precisa terminar, como uma queda no último quadro, a duração dele);
 - "narration": texto falado (áudio do m8_narrate.py). A cena dura o bastante pra fala caber, e o clipe é cortado nessa
   duração; se acabar antes, o último quadro fica congelado. As legendas saem desse texto (ou de "subtitle", se o escrito for diferente do
-  falado), em blocos de até duas linhas, no tempo proporcional ao tamanho de cada bloco;
+  falado), em blocos de até duas linhas, no tempo proporcional ao tamanho de cada bloco (uma quebra de linha no texto
+  força a quebra na legenda);
 - "caption": legenda fixa (texto ou [texto, linha menor]), pra cortes sem narração;
 - "label": texto grande no alto (um número de impacto), a partir de "label_at" segundos da cena;
 - "hold": segundos com o último quadro congelado; "zoom": true — aproximação lenta na imagem parada;
@@ -37,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from m8_render import BG, H, W, font  # noqa: E402
 
 ENCODE = ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-r"]
-LEAD, TAIL = 0.06, 0.18  # respiro antes e depois de cada fala (s)
+LEAD, TAIL = 0.1, 0.3  # respiro antes e depois de cada fala (s)
 
 
 def run(cmd: list[str]) -> None:
@@ -89,9 +90,35 @@ def caption_layer(caption, path: Path) -> None:
 SUB_WIDTH = 46  # caracteres por linha de legenda (duas linhas por bloco)
 
 
+SHORT = set("a o as os um uma uns umas de do da dos das em no na nos nas e que se com pra pro por ao aos vai é mas "
+            "nem".split())  # palavras que não terminam linha
+
+
+def two_lines(text: str) -> list[str]:
+    """Quebra um bloco em até duas linhas equilibradas, de preferência depois de uma pontuação, e nunca logo depois de
+    um artigo, preposição ou número (uma quebra de linha no texto manda)."""
+    if "\n" in text:
+        return [line.strip() for line in text.split("\n")]
+    if len(text) <= SUB_WIDTH:
+        return [text]
+    best = None
+    for m in re.finditer(r"\s", text):
+        a, b = text[:m.start()], text[m.end():]
+        if len(a) <= SUB_WIDTH and len(b) <= SUB_WIDTH:
+            last = a.split()[-1]
+            cost = max(len(a), len(b))
+            if last[-1] in ".,;:!?…":
+                cost -= 8
+            elif last.lower() in SHORT or re.fullmatch(r"[#\d.]+", last):
+                cost += 10
+            if best is None or cost < best[0]:
+                best = (cost, [a, b])
+    return best[1] if best else textwrap.wrap(text, width=SUB_WIDTH)
+
+
 def subtitle_layer(text: str, path: Path) -> None:
     """Legenda da narração: até duas linhas do mesmo tamanho."""
-    lines = textwrap.wrap(text, width=SUB_WIDTH)
+    lines = two_lines(text)
     band(lines, path, [font(36, True)] * len(lines))
 
 
@@ -121,14 +148,15 @@ def split_fit(text: str) -> list[str]:
 
 
 def chunks(text: str) -> list[str]:
-    """Blocos de legenda de até duas linhas: por frase, frases longas quebradas no meio, e frases curtas juntas."""
+    """Blocos de legenda de até duas linhas: por frase, frases longas quebradas no meio, e duas frases curtas juntas,
+    uma em cada linha."""
     out = []
     for part in re.split(r"(?<=[.!?…])\s+", text.strip()):
         out += split_fit(part)
     merged = []
     for c in out:
-        if merged and fits(merged[-1] + " " + c):
-            merged[-1] += " " + c
+        if merged and "\n" not in merged[-1] and len(merged[-1]) <= SUB_WIDTH and len(c) <= SUB_WIDTH:
+            merged[-1] += "\n" + c
         else:
             merged.append(c)
     return merged

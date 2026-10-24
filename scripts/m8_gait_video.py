@@ -77,7 +77,7 @@ def main() -> None:
         lifted = [SHORT[leg] for leg in LEGS if s["patins"][leg]["no_chao"] < 0.5]
         note = f"patins no chão: {pct(grounded)}" + (f" · no ar quase sempre: {', '.join(lifted)}" if lifted else "")
         ax.set_title(f"{label}   ", loc="left", fontsize=13, color=FG, fontweight="bold", pad=4)
-        ax.annotate(note, xy=(0.24, 1.02), xycoords="axes fraction", fontsize=10.5, color=DIM, va="bottom")
+        ax.annotate(note, xy=(1.0, 1.02), xycoords="axes fraction", fontsize=10.5, color=DIM, va="bottom", ha="right")
         bx = fig.add_subplot(gs[i, 1], facecolor=BG)
         share = [s["patins"][leg]["parcela_do_empurrao"] for leg in ORDER]
         ys = np.arange(len(ORDER))[::-1]

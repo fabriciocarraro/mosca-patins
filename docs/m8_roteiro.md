@@ -21,10 +21,12 @@ registro do próprio `final2_s0` quando ele terminar.
   - `m8_curves.py`: gráficos;
   - `m8_gait.py`: diagrama de contato e empurrão de cada patim;
   - `m6_milestones.py`: escolha das tentativas.
-- **Duração-alvo: no máximo 2 minutos** (decisão do usuário, 24/10), com foco na história. O corte de trabalho é o
-  `docs/m8_corte_v3.json` (1 min 56 s com a voz provisória): narração (`docs/m8_narracao.md`, `m8_narrate.py`), legendas
-  tiradas da fala e trilha sintetizada (`m8_music.py`). A versão anterior, só com legendas, era o `docs/m8_corte_2min.json`
-  (1 min 25 s), nesta ordem:
+- **Duração: ~2 minutos**, com foco na história (decisão do usuário, 24/10; com a narração gravada na velocidade natural, o
+  corte ficou em 2 min 14 s, e o limite caiu). O corte de trabalho é o `docs/m8_corte_v3.json`: narração
+  gravada pelo Fabrício (`docs/m8_narracao.md`, cortada por `m8_cut_narration.py` com o mapa em
+  `docs/m8_narracao_edicao.json`), legendas tiradas da fala (os clipes saem com a faixa de baixo livre para elas,
+  `m8_render.py --bottom 140`, para a câmera lenta, a régua e a legenda de cores aparecerem) e trilha sintetizada
+  (`m8_music.py`). A versão anterior, só com legendas, era o `docs/m8_corte_2min.json` (1 min 25 s), nesta ordem:
   1. gancho com a patinadora final;
   2. o que é esse cérebro (cartela com rótulos);
   3. ritmo sem treino e caminhada;

@@ -1,15 +1,16 @@
 # M8: roteiro da narração do corte v3 (24/10/2026)
 
-**Roteiro 2, para regravar.** É o mesmo tom da gravação de 24/10, com três correções:
+**Roteiro 2, gravado em 24/10 (gravação 2).** É o mesmo tom da gravação 1, com três correções:
 
 - **O treino:** não mexe só na força das ligações. Quem liga com quem nunca muda, e o treino ajusta "volumes": a força
   das ligações no treino de andar e o quanto cada tipo de neurônio dispara no de patins. A cartela do cérebro detalha;
 - **Os patins:** deslizam pra frente e pra trás, nunca de lado (antes: "só deslizam pra frente");
 - **Os neurônios de andar:** desligados desde o começo do teste, ela nem sai do lugar (antes: "para na hora").
 
-São 305 palavras, ~2 min 53 s de fala no ritmo da gravação de 24/10. Pra caber nos
-2 minutos com os respiros entre as cenas, a soma das falas deve ficar em ~1 min 50 s. No seu ritmo natural fica perto;
-se passar um pouco, acelero uns 4% sem mudar o tom.
+Na gravação 2, a fala saiu com as palavras do próprio Fabrício (as legendas seguem a fala, em `docs/m8_corte_v3.json`), na velocidade
+natural: 2 min 5 s de fala, e o corte passa um pouco dos 2 minutos (o limite caiu). Dois trechos saíram por precisão:
+"volumes das ligações" (o treino de patins não mexe na força das ligações) e "nesse treinamento de aprendizado por
+reforço" (o treino de patins é por estratégia evolutiva). O mapa da edição está em `docs/m8_narracao_edicao.json`.
 
 ## Como gravar
 
@@ -41,7 +42,7 @@ se passar um pouco, acelero uns 4% sem mudar o tom.
 | 16 | Gancho do conectoma embaralhado | E se as ligações fossem sorteadas? Esse treino já tá rodando. Será que ela patina igual? | 6 s |
 | 17 | Fecho | Tudo aqui é simulado, nada foi encenado. Detalhes na descrição! | 4 s |
 
-A gravação de 24/10 (roteiro 1) e o mapa da edição dela estão em `docs/m8_narracao_edicao.json`.
+A gravação 1 (roteiro 1, também de 24/10) foi cortada pelo mapa em `docs/m8_narracao_edicao_gravacao1.json`.
 
 A conta dos 70 km/h: 3,3 cm/s divididos pelos 0,297 cm do corpo dão ~11 corpos por segundo; numa pessoa de
 1,75 m, ~19,5 m/s, ou ~70 km/h.
