@@ -4,7 +4,8 @@ Motores:
 - "sapi": vozes instaladas no Windows (System.Speech), sem baixar nada. A pt-BR disponível ("Microsoft Maria Desktop")
   soa robótica: serve pra cronometrar o corte, não pra publicar.
 - "edge": vozes neurais da Microsoft (pacote edge-tts, que manda o texto pro serviço on-line da Microsoft).
-- "files": áudios gravados ou gerados fora daqui, um por segmento, em `--dir` (segNN.wav, NN = índice do segmento).
+- "files": áudios gravados ou gerados fora daqui, um por segmento, em `--dir` (segNN.wav, .mp3, .m4a…; NN = índice do
+  segmento), com o silêncio das pontas cortado e o ronco grave filtrado.
 
 Saída: outputs/narracao/<motor>/segNN.wav e duracoes.json ({índice: segundos}), lidos pelo m8_assemble.py.
 
@@ -19,7 +20,6 @@ import argparse
 import asyncio
 import hashlib
 import json
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -43,10 +43,12 @@ def duration(path: Path) -> float:
     return float(r.stdout.strip())
 
 
-def to_wav(src: Path, dst: Path) -> None:
-    """Padroniza: 44,1 kHz mono, sem silêncio no começo e no fim."""
+def to_wav(src: Path, dst: Path, recorded: bool = False) -> None:
+    """Padroniza: 44,1 kHz mono, sem silêncio no começo e no fim (numa gravação, também sem o ronco abaixo de 70 Hz)."""
     trim = "silenceremove=start_periods=1:start_threshold=-50dB,areverse,silenceremove=start_periods=1:" \
            "start_threshold=-50dB,areverse"
+    if recorded:
+        trim = "highpass=f=70," + trim.replace("-50dB", "-42dB")
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-af", trim, "-ar", "44100", "-ac", "1",
                     str(dst)], check=True)
 
@@ -91,8 +93,11 @@ def main() -> None:
             continue
         wav = out / f"seg{k:02d}.wav"
         key = hashlib.sha256(f"{args.engine}|{voice}|{args.rate}|{text}".encode()).hexdigest()[:16]
-        if args.engine == "files":
-            shutil.copy(Path(args.dir) / f"seg{k:02d}.wav", wav)
+        if args.engine == "files":  # gravação de qualquer formato que o ffmpeg leia (wav, mp3, m4a do celular…)
+            found = sorted(Path(args.dir).glob(f"seg{k:02d}.*"))
+            if not found:
+                sys.exit(f"falta a gravação da cena {k}: {Path(args.dir) / f'seg{k:02d}'}.wav (ou .mp3, .m4a…)")
+            to_wav(found[0], wav, recorded=True)
         elif done.get(str(k)) != key or not wav.exists():  # só regera o que mudou
             (sapi if args.engine == "sapi" else edge)(text, wav, voice, args.rate)
             done[str(k)] = key
