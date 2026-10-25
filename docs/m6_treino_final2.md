@@ -177,6 +177,59 @@ múltiplos da corrente de um comando de 1 rad/s):
 - **Passos de treino:** o critério "em até 3× os passos do M2" não vale para as estratégias evolutivas, o mesmo desvio
   do primeiro treino final. Registro os passos até a primeira geração que cumpre o critério do M2.
 
+## Resultado no fim (25/10/2026)
+
+O treino gravado chegou à geração 1400 às 21h19 de 25/10 (tentativas #1 a #89.600), ~43 h depois de começar, com as
+retomadas das gerações 500 e 1000. Foram ~95 s por geração, e ~120 s quando outros jobs dividiram a máquina.
+
+**Reprodução exata:**
+
+- as 1400 linhas do `metrics.jsonl` são idênticas às da evolui_q, da evolui_r e da evolui_u, avaliações incluídas;
+- os checkpoints das gerações 500 e 1400 são idênticos, tensor por tensor (63 de 63), aos da evolui_q e da evolui_u. Só
+  mudam o nome da execução e a marca de captura;
+- por isso as medidas abaixo repetem as da evolui_u na geração 1400.
+
+**Critério do M2** (`m7_eval.py`, 20 testes fixos pedindo 3,5 cm/s, a cada 50 gerações):
+
+| Gerações | M2 | Média ≥3 cm/s | Velocidade | Desliza | Quedas |
+|---|---|---|---|---|---|
+| 450 | não | 85% | 3,11 cm/s | 23% | 0% |
+| 500 | OK | 100% | 3,14 cm/s | 28% | 0% |
+| 550–1100 | não | 0–100% | 2,36–3,41 cm/s | 13–28% | 0% |
+| 1150–1250 | OK | 100% | 3,62–3,90 cm/s | 25–44% | 0% |
+| 1300 | não (desliza 24%) | 100% | 3,14 cm/s | 24% | 0% |
+| 1350 | OK | 100% | 3,31 cm/s | 47% | 0% |
+| 1400 | OK | 100% | 3,26 cm/s | 49% | 0% |
+
+- A primeira geração avaliada que cumpre é a 500: tentativas #1 a #32.000, no máximo 16 milhões de passos de controle
+  (tentativas de até 5 s, a 10 ms).
+- A regra de apoio (geração 500) a deixou mais lenta até o empurrão inicial (geração 1000) a trazer de volta.
+- Curvas: não vira quando pedido (giro médio −0,10 / −0,09 rad/s pedindo +0,5 / −0,5; acerto 0%). Para quando pedido em
+  100% dos testes.
+
+**Provas causais** (`m6_eval.py --probes`, 3 cm/s), como na evolui_u:
+
+- calar os DNg100 a para: 3,02 → −0,00 cm/s, sem quedas;
+- o DNa02 continua invertido: o esquerdo a vira para a direita (−0,28 rad/s), o direito para a esquerda (+0,10 rad/s); vira
+  para o lado estimulado em 5% dos testes.
+
+**Marcha** (`m8_gait.py`, teste fixo 1, 3,5 cm/s): 3,23 cm/s, giro +0,31 rad/s, desliza 45% (com os seis patins no chão,
+2%). Patins no chão: frente 70% (E) e 97% (D), meio 54% e 58%, trás 87% e 99%. O que mais empurra é o do meio esquerdo,
+com 35% do empurrão.
+
+**Ensaio da captura (M5):** três tentativas sorteadas (semente 187937755: #14.181, #20.648 e #44.463), re-simuladas a
+partir da captura. A física saiu com desvio 0 e o cérebro com diferença 0 nas ações, também na leva inteira de cada uma.
+
+**Clipes do vídeo (M8):**
+
+- os testes refeitos a partir dos checkpoints gravados saíram bit a bit iguais (posturas, atividade e ações) aos da
+  evolui_q e da evolui_u, de onde as cenas do corte v3 foram renderizadas:
+  - teste fixo 2 a 3,5 cm/s, nas gerações 500 e 1400;
+  - teste fixo 1 a 3 cm/s com e sem intervenção (DNg100 calado, DNa02 de cada lado), na 1400;
+  - a grade dos 20 testes, na 1400;
+- o `m8_verify.py` conferiu as 7 tentativas gravadas do corte, com o cérebro re-simulado, e os 8 testes, incluindo a
+  brecha do `final_s0`: todos OK.
+
 ## Disco e máquina
 
 - O `final_s0` ocupou 29 GB em 2000 gerações com captura (~14 MB por geração). Este treino deve ocupar ~20 GB, e há
