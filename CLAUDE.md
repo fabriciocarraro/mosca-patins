@@ -203,3 +203,8 @@ cada etapa está no README.
 - Reprodução (24/10): o `m6_es.py` com `--deterministic --net-dtype float64` repete o treino entre execuções e retomadas
   (o final2_s0, com captura, reproduziu a evolui_q linha a linha), então dá para achar a receita sem captura e depois
   gravá-la. O venv do Spark não tem matplotlib: o `m8_gait.py` grava o JSON e falha no gráfico (gere a figura no notebook).
+- M7 (28/10, `docs/m7_controles.md`): com a receita final, real e embaralhado empatam na métrica primária e a MLP (PPO, do
+  zero) cumpre o M2 antes dos dois nas 3 sementes; no vídeo, a fiação real não dá vantagem para aprender a patinar. O
+  "acerto nas curvas" do `m7_eval.py` engana: quem gira sempre para um lado acerta as curvas desse lado. Conte as
+  avaliações que viram para os dois lados (`m7_summary.py`). O `m8_gait.py` roda a rede em float32 fora do modo
+  determinístico: a mesma política deu giro +0,29 e +0,31 rad/s em duas medidas.
